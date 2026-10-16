@@ -523,86 +523,89 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_user_request_at[user_key] = now
     pending_generations += 1
 
-    # Send normally, not as a reply: the original message may have been deleted.
-    queued = generation_queue_lock.locked()
-    if queued:
-        status_text = (
-            random.choice(GENERATION_ACKNOWLEDGEMENTS)
-            + "\nОчередь занята, кожаный. Запущу, как только освободится браузер."
-        )
-    else:
-        status_text = random.choice(GENERATION_ACKNOWLEDGEMENTS)
-    status = await context.bot.send_message(chat_id=chat.id, text=status_text)
-
-    async with generation_queue_lock:
+    try:
+        # Send normally, not as a reply: the original message may have been deleted.
+        queued = generation_queue_lock.locked()
         if queued:
-            log.info("Queued generation acquired browser slot.")
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            if attempt > 1:
-                try:
-                    await status.edit_text(f"Повторная попытка {attempt}/{MAX_ATTEMPTS}…")
-                except Exception:
-                    log.exception("Не удалось обновить статусное сообщение Telegram")
-                    try:
-                        status = await context.bot.send_message(
-                            chat_id=chat.id,
-                            text=f"Повторная попытка {attempt}/{MAX_ATTEMPTS}…",
-                        )
-                    except Exception:
-                        log.exception("Не удалось отправить статусное сообщение Telegram")
+            status_text = (
+                random.choice(GENERATION_ACKNOWLEDGEMENTS)
+                + "\nОчередь занята, кожаный. Запущу, как только освободится браузер."
+            )
+        else:
+            status_text = random.choice(GENERATION_ACKNOWLEDGEMENTS)
+        status = await context.bot.send_message(chat_id=chat.id, text=status_text)
     
-            try:
-                path = await asyncio.to_thread(generate_and_download, prompt)
-                with path.open("rb") as photo:
-                    await context.bot.send_photo(
-                        chat_id=chat.id,
-                        photo=photo,
-                        caption="Готово · Nano Banana 2.1",
-                    )
-                try:
-                    await status.delete()
-                except Exception:
-                    log.exception("Не удалось удалить статусное сообщение Telegram")
-                return
-            except Exception as exc:
-                log.exception("Попытка %s завершилась ошибкой", attempt)
-                if "подозрительную активность" in str(exc).lower() or "suspicious activity" in str(exc).lower():
-                    error_text = (
-                        "Google Flow отклонил генерацию из-за подозрительной активности. "
-                        "Автоматические повторы остановлены, чтобы не усиливать блокировку. "
-                        "Проверьте сообщение об ошибке в Flow и попробуйте позже вручную.\n\n"
-                        f"Причина: {str(exc)[:700]}"
-                    )
+        async with generation_queue_lock:
+            if queued:
+                log.info("Queued generation acquired browser slot.")
+            for attempt in range(1, MAX_ATTEMPTS + 1):
+                if attempt > 1:
                     try:
-                        await status.edit_text(error_text)
+                        await status.edit_text(f"Повторная попытка {attempt}/{MAX_ATTEMPTS}…")
                     except Exception:
                         log.exception("Не удалось обновить статусное сообщение Telegram")
-                    return
-                if attempt >= MAX_ATTEMPTS:
-                    error_text = f"Не удалось получить изображение после {MAX_ATTEMPTS} попыток.\n\nПричина: {str(exc)[:700]}"
-                    try:
-                        await status.edit_text(error_text)
-                    except Exception:
-                        log.exception("Не удалось обновить итоговый статус Telegram")
                         try:
-                            await context.bot.send_message(chat_id=chat.id, text=error_text)
+                            status = await context.bot.send_message(
+                                chat_id=chat.id,
+                                text=f"Повторная попытка {attempt}/{MAX_ATTEMPTS}…",
+                            )
                         except Exception:
-                            log.exception("Не удалось отправить итоговую ошибку Telegram")
-                    return
-    
+                            log.exception("Не удалось отправить статусное сообщение Telegram")
+        
                 try:
-                    await status.edit_text(f"Попытка {attempt} не удалась. Жду 10 секунд и повторяю…")
-                except Exception:
-                    log.exception("Не удалось обновить статусное сообщение Telegram")
-                    try:
-                        status = await context.bot.send_message(
+                    path = await asyncio.to_thread(generate_and_download, prompt)
+                    with path.open("rb") as photo:
+                        await context.bot.send_photo(
                             chat_id=chat.id,
-                            text=f"Попытка {attempt} не удалась. Повторяю через 10 секунд…",
+                            photo=photo,
+                            caption="Готово · Nano Banana 2.1",
                         )
+                    try:
+                        await status.delete()
                     except Exception:
-                        log.exception("Не удалось отправить статусное сообщение Telegram")
-                await asyncio.sleep(10)
-
+                        log.exception("Не удалось удалить статусное сообщение Telegram")
+                    return
+                except Exception as exc:
+                    log.exception("Попытка %s завершилась ошибкой", attempt)
+                    if "подозрительную активность" in str(exc).lower() or "suspicious activity" in str(exc).lower():
+                        error_text = (
+                            "Google Flow отклонил генерацию из-за подозрительной активности. "
+                            "Автоматические повторы остановлены, чтобы не усиливать блокировку. "
+                            "Проверьте сообщение об ошибке в Flow и попробуйте позже вручную.\n\n"
+                            f"Причина: {str(exc)[:700]}"
+                        )
+                        try:
+                            await status.edit_text(error_text)
+                        except Exception:
+                            log.exception("Не удалось обновить статусное сообщение Telegram")
+                        return
+                    if attempt >= MAX_ATTEMPTS:
+                        error_text = f"Не удалось получить изображение после {MAX_ATTEMPTS} попыток.\n\nПричина: {str(exc)[:700]}"
+                        try:
+                            await status.edit_text(error_text)
+                        except Exception:
+                            log.exception("Не удалось обновить итоговый статус Telegram")
+                            try:
+                                await context.bot.send_message(chat_id=chat.id, text=error_text)
+                            except Exception:
+                                log.exception("Не удалось отправить итоговую ошибку Telegram")
+                        return
+        
+                    try:
+                        await status.edit_text(f"Попытка {attempt} не удалась. Жду 10 секунд и повторяю…")
+                    except Exception:
+                        log.exception("Не удалось обновить статусное сообщение Telegram")
+                        try:
+                            status = await context.bot.send_message(
+                                chat_id=chat.id,
+                                text=f"Попытка {attempt} не удалась. Повторяю через 10 секунд…",
+                            )
+                        except Exception:
+                            log.exception("Не удалось отправить статусное сообщение Telegram")
+                    await asyncio.sleep(10)
+    
+    finally:
+        pending_generations = max(0, pending_generations - 1)
 
 def main():
     if not TOKEN:
