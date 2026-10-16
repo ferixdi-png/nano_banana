@@ -18,18 +18,21 @@ from telegram.ext import (
 load_dotenv()
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-# Kept for compatibility with the existing Render environment. Access is now
-# controlled by ALLOWED_CHAT_ID so all members of the configured group can use it.
+# The configured admin may generate in private chat; everyone else must use the group.
 ALLOWED_USER_ID_RAW = os.getenv("ALLOWED_USER_ID", "").strip()
+ALLOWED_USER_ID = int(ALLOWED_USER_ID_RAW) if ALLOWED_USER_ID_RAW else None
 ALLOWED_CHAT_ID_RAW = os.getenv("ALLOWED_CHAT_ID", "").strip()
 ALLOWED_CHAT_ID = int(ALLOWED_CHAT_ID_RAW) if ALLOWED_CHAT_ID_RAW else None
 
 GENERATION_COOLDOWN_SECONDS = 25
 # Only explicit image-creation requests trigger a paid generation.
 IMAGE_INTENT_RE = re.compile(
-    r"\b(?:сгенерируй|сгенерировать|сгенерируй-ка|нарисуй|нарисовать|"
-    r"создай\s+(?:изображение|картинку|фото)|сделай\s+(?:фото|картинку|изображение)|"
-    r"сделать\s+(?:фото|картинку|изображение)|изобрази|генерируй)\b",
+    r"\b(?:сгенерируй(?:-ка)?|сгенерировать|генерируй|генерировать|"
+    r"нарисуй|нарисовать|изобрази|изобразить|"
+    r"создай\s+(?:изображение|картинку|фото)|"
+    r"сделай\s+(?:фото|картинку|изображение)|"
+    r"сделать\s+(?:фото|картинку|изображение)|"
+    r"сгенерируй\s+(?:изображение|картинку|фото))\b",
     re.IGNORECASE,
 )
 
@@ -56,27 +59,55 @@ def generate_and_download(prompt: str) -> Path:
     raise GenerationError("Генератор не инициализирован. Перезапусти Worker, кожаный.")
 
 
-def is_allowed_group(update: Update) -> bool:
-    """Allow any member only in the configured Telegram group/supergroup."""
+def can_generate_here(update: Update) -> bool:
+    """Everyone can generate in the configured group; admin can also use private chat."""
     chat = update.effective_chat
-    return bool(
+    user = update.effective_user
+    if not chat:
+        return False
+    in_allowed_group = (
         ALLOWED_CHAT_ID is not None
-        and chat
         and chat.id == ALLOWED_CHAT_ID
         and chat.type in ("group", "supergroup")
     )
+    is_admin_private = (
+        ALLOWED_USER_ID is not None
+        and user is not None
+        and user.id == ALLOWED_USER_ID
+        and chat.type == "private"
+    )
+    return bool(in_allowed_group or is_admin_private)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
-    if not message or not is_allowed_group(update):
-        # No bot conversations or generation in private chats.
+    if not message:
+        return
+
+    chat = update.effective_chat
+    user = update.effective_user
+    if chat and chat.type == "private":
+        if ALLOWED_USER_ID is not None and user and user.id == ALLOWED_USER_ID:
+            await message.reply_text(
+                "О, босс-кожаный, для тебя личный вход открыт. Можешь генерировать прямо здесь "
+                "или в группе. Пиши одним сообщением, например: «Сгенерируй изображение: "
+                "рыжий кот в космическом скафандре». Разрешение строго 1K, формат 9:16."
+            )
+        else:
+            await message.reply_text(
+                "Кожаный, в личке генератор не работает. Заходи в нашу группу и напиши "
+                "одним сообщением, например: «Сгенерируй изображение: рыжий кот в космическом "
+                "скафандре». Там и запустится магия. Разрешение строго 1K, формат 9:16."
+            )
+        return
+
+    if not can_generate_here(update):
         return
 
     await message.reply_text(
         "О, кожаные собрались. Я ваш карманный пиксельный демон на GPT Image 2.5. "
-        "Чтобы запустить генерацию, напиши в группе «сгенерируй», «нарисуй», "
-        "«создай изображение» или «сделай фото» и добавь описание. "
+        "Напиши в группе одним сообщением команду и промпт: «сгенерируй изображение ...», "
+        "«нарисуй ...», «создай фото ...» или «сделай фото ...». "
         "Каждая картинка — строго 1K, формат 9:16. Пиксели сами себя не нарисуют."
     )
 
@@ -88,7 +119,7 @@ async def handle_prompt(
     global _generation_in_progress, _last_generation_finished_at
 
     message = update.effective_message
-    if not message or not is_allowed_group(update):
+    if not message or not can_generate_here(update):
         return
 
     prompt = (message.text or "").strip()
@@ -168,9 +199,10 @@ def main():
 
     log.info(
         "Telegram bot started; provider: Kie AI / GPT Image 2.5; "
-        "group-only access enabled for chat_id=%s; cooldown=%ss after each task; "
-        "explicit image intent required; resolution=1K.",
+        "group access enabled for chat_id=%s; admin private access for user_id=%s; "
+        "cooldown=%ss after each task; explicit image intent required; resolution=1K.",
         ALLOWED_CHAT_ID,
+        ALLOWED_USER_ID,
         GENERATION_COOLDOWN_SECONDS,
     )
     app.run_polling()
