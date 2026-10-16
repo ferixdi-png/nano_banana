@@ -407,7 +407,15 @@ def wait_for_new_image(page, old_sources):
                 return src
         last_body = page.locator("body").inner_text()
         body = last_body.lower()
-        # Informational Google Flow bonus banners do not block zero-credit Nano Banana generations.
+        # Detect a real Flow rejection immediately instead of waiting for the full timeout.
+        if (
+            "мы заметили подозрительную активность" in body
+            or "suspicious activity" in body
+        ):
+            raise FlowError(
+                "Flow отклонил генерацию из-за подозрительной активности. "
+                "Остановили ожидание, чтобы не усугублять блокировку."
+            )
         if any(marker in body for marker in ("sign in", "войдите в аккаунт", "нужно войти в аккаунт")):
             raise FlowError(
                 "Flow требует авторизацию. "
