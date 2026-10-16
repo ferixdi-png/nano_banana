@@ -69,7 +69,7 @@ START_ADMIN_LINES = [
     "Для тебя, босс, отдельный вход. Пользуйся властью разумно: например, закажи кота в скафандре.",
 ]
 START_PRIVATE_LINES = [
-    "За генерацией заходи в чат креаторов: https://t.me/ai_neiro_chat",
+    "Генерация бесплатная.\n\nЗаходи в чат креаторов: https://t.me/ai_neiro_chat\n\nНапиши, что хочешь создать, и обязательно упомяни Ferixdi в запросе, чтобы бот запустил генерацию.",
 ]
 START_GROUP_LINES = [
     "Так, кожаные, открываем художественный цех. Я — ваш пиксельный демон, но с лимитом терпения и без берета.",
@@ -196,7 +196,23 @@ async def handle_prompt(
     global _generation_in_progress, _last_generation_finished_at
 
     message = update.effective_message
-    if not message or not can_generate_here(update):
+    if not message:
+        return
+
+    chat = update.effective_chat
+    user = update.effective_user
+    is_admin_private = (
+        chat is not None
+        and chat.type == "private"
+        and ALLOWED_USER_ID is not None
+        and user is not None
+        and user.id == ALLOWED_USER_ID
+    )
+    if chat is not None and chat.type == "private" and not is_admin_private:
+        await message.reply_text(random.choice(START_PRIVATE_LINES))
+        return
+
+    if not can_generate_here(update):
         return
 
     prompt = (message.text or message.caption or "").strip()
