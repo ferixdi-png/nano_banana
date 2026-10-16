@@ -147,9 +147,23 @@ def open_flow_page(browser):
         attempt_normal_google_login(page)
 
     if "/project/" not in page.url:
+        # Log only the final host/path and title; never log cookies, query strings,
+        # page contents, or authentication values.
+        final = urlparse(page.url)
+        safe_location = f"{final.scheme}://{final.netloc}{final.path}"
+        try:
+            page_title = page.title()[:120]
+        except Exception:
+            page_title = "(title unavailable)"
+        logging.error(
+            "Flow project redirect diagnostic: location=%s title=%r",
+            safe_location,
+            page_title,
+        )
         raise bot.FlowError(
-            "Google Flow не открыл проект и перенаправил на другую страницу. "
-            "Проверь доступ аккаунта к Flow и актуальность FLOW_STORAGE_STATE_B64."
+            "Google Flow не открыл проект. В логах есть безопасная диагностика "
+            "конечного адреса и заголовка страницы; проверь доступ аккаунта и "
+            "состояние авторизации."
         )
 
     try:
