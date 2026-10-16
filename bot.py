@@ -255,24 +255,33 @@ async def handle_prompt(
         path = await asyncio.to_thread(generate_and_download, cleaned_prompt)
 
         # Send directly to the chat, not as a reply to the source message.
-        # This avoids Telegram rejecting delivery when the original message is missing.
+        # Retry photo upload, then fall back to a document so Telegram constraints
+        # or a transient upload failure do not silently lose a completed image.
         caption = random.choice(SUCCESS_LINES)
+        delivery_error = None
+
         try:
+            with path.open("rb") as image_file:
+                await context.bot.send_photo(
+                    chat_id=message.chat_id,
+                    photo=image_file,
+                    caption=caption,
+                    read_timeout=120,
+                    write_timeout=120,
+                    connect_timeout=20,
+                    pool_timeout=20,
+                )
+            log.info(
+                "Image delivered successfully to Telegram chat_id=%s file=%s bytes=%s",
+                message.chat_id, path.name, path.stat().st_size
+            )
+        except Exception as photo_error:
+            delivery_error = photo_error
+            log.warning(
+                "Photo upload failed; trying document fallback. chat_id=%s error=%r",
+                message.chat_id, photo_error, exc_info=True
+            )
             try:
-                with path.open("rb") as image_file:
-                    await context.bot.send_photo(
-                        chat_id=message.chat_id,
-                        photo=image_file,
-                        caption=caption,
-                        read_timeout=120,
-                        write_timeout=120,
-                        connect_timeout=20,
-                        pool_timeout=20,
-                    )
-                log.info("Image delivered successfully to Telegram chat_id=%s", message.chat_id)
-            except BadRequest as photo_error:
-                # Some generated images exceed Telegram's photo constraints; send as a file instead.
-                log.warning("Telegram rejected photo upload; retrying as document: %s", photo_error)
                 with path.open("rb") as image_file:
                     await context.bot.send_document(
                         chat_id=message.chat_id,
@@ -283,36 +292,50 @@ async def handle_prompt(
                         connect_timeout=20,
                         pool_timeout=20,
                     )
-                log.info("Image delivered as document to Telegram chat_id=%s", message.chat_id)
-        except TimedOut:
-            log.exception("Telegram upload timed out; retrying delivery once")
-            try:
-                with path.open("rb") as image_file:
-                    await context.bot.send_photo(
-                        chat_id=message.chat_id,
-                        photo=image_file,
-                        caption=caption,
-                        read_timeout=120,
-                        write_timeout=120,
-                        connect_timeout=20,
-                        pool_timeout=20,
-                    )
-                log.info("Image delivered after timeout retry to Telegram chat_id=%s", message.chat_id)
-            except Exception:
-                log.exception("Image was generated but Telegram delivery failed after retry")
+                log.info(
+                    "Image delivered as document to Telegram chat_id=%s file=%s bytes=%s",
+                    message.chat_id, path.name, path.stat().st_size
+                )
+                delivery_error = None
+            except Exception as document_error:
+                log.warning(
+                    "Document fallback failed; retrying photo once. chat_id=%s error=%r",
+                    message.chat_id, document_error, exc_info=True
+                )
+                delivery_error = document_error
                 try:
-                    await status.edit_text(random.choice(DELIVERY_ERROR_LINES))
-                except Exception:
-                    log.exception("Could not edit progress message; sending delivery error as a new message")
-                    await message.reply_text(random.choice(DELIVERY_ERROR_LINES))
-                return
-        except Exception:
-            log.exception("Image was generated but Telegram delivery failed")
+                    with path.open("rb") as image_file:
+                        await context.bot.send_photo(
+                            chat_id=message.chat_id,
+                            photo=image_file,
+                            caption=caption,
+                            read_timeout=120,
+                            write_timeout=120,
+                            connect_timeout=20,
+                            pool_timeout=20,
+                        )
+                    log.info(
+                        "Image delivered after final photo retry to Telegram chat_id=%s file=%s",
+                        message.chat_id, path.name
+                    )
+                    delivery_error = None
+                except Exception as retry_error:
+                    delivery_error = retry_error
+                    log.exception(
+                        "Image generated but every Telegram delivery attempt failed; "
+                        "chat_id=%s file=%s original_error=%r",
+                        message.chat_id, path.name, photo_error
+                    )
+
+        if delivery_error is not None:
             try:
                 await status.edit_text(random.choice(DELIVERY_ERROR_LINES))
             except Exception:
                 log.exception("Could not edit progress message; sending delivery error as a new message")
-                await message.reply_text(random.choice(DELIVERY_ERROR_LINES))
+                try:
+                    await message.reply_text(random.choice(DELIVERY_ERROR_LINES))
+                except Exception:
+                    log.exception("Could not notify chat about image delivery failure")
             return
 
         try:
