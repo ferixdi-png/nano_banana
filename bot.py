@@ -33,9 +33,9 @@ BOT_NAME_RE = re.compile(r"(?<![\w])(?:ferixdi|фериксди)(?![\w])", re.IG
 # Only explicit image-creation requests trigger generation.
 # Conversational command wording is accepted; wrapper text is stripped before generation.
 IMAGE_INTENT_RE = re.compile(
-    r"\\b(?:сгенерируй(?:-ка)?|сгенерировать|генерируй|генерировать|"
+    r"\b(?:сгенерируй(?:-ка)?|сгенерировать|генерируй|генерировать|"
     r"нарисуй(?:-ка)?|нарисовать|изобрази|изобразить|"
-    r"создай|создать|сделай(?:-ка)?|сделать|запили)\\b",
+    r"создай|создать|сделай(?:-ка)?|сделать|запили)\b",
     re.IGNORECASE,
 )
 # These keywords also indicate an image-generation prompt in the creators chat.
@@ -122,23 +122,23 @@ def generate_and_download(prompt: str) -> Path:
 def clean_generation_prompt(message_text: str) -> str:
     """Keep the visual request and remove bot addressing plus conversational wrappers."""
     prompt = BOT_NAME_RE.sub(" ", message_text)
-    prompt = re.sub(r"\\s+", " ", prompt).strip()
+    prompt = re.sub(r"\s+", " ", prompt).strip()
 
     # Remove an optional leading English prompt label.
-    prompt = re.sub(r"^prompt\\s*[:—–-]?\\s*", "", prompt, count=1, flags=re.IGNORECASE)
+    prompt = re.sub(r"^prompt\s*[:—–-]?\s*", "", prompt, count=1, flags=re.IGNORECASE)
 
     # Strip command words and polite/friendly filler from the start, iteratively.
     command_re = re.compile(
         r"^(?:сгенерируй(?:-ка)?|сгенерировать|генерируй|генерировать|"
         r"нарисуй(?:-ка)?|нарисовать|изобрази|изобразить|"
-        r"создай|создать|сделай(?:-ка)?|сделать|запили)\\b"
-        r"[\\s,.:;!—–-]*",
+        r"создай|создать|сделай(?:-ка)?|сделать|запили)\b"
+        r"[\s,.:;!—–-]*",
         re.IGNORECASE,
     )
     filler_re = re.compile(
-        r"^(?:(?:по[- ]братски|и\\s+мне|для\\s+меня|пожалуйста|плиз|"
+        r"^(?:(?:по[- ]братски|и\s+мне|для\s+меня|пожалуйста|плиз|"
         r"братски|бро|брат|дружище|мне|можешь|можно|давай|ну|слушай|эй|ка|же)"
-        r"\\b[\\s,.:;!—–-]*)+",
+        r"\b[\s,.:;!—–-]*)+",
         re.IGNORECASE,
     )
 
@@ -147,9 +147,9 @@ def clean_generation_prompt(message_text: str) -> str:
         previous = prompt
         prompt = command_re.sub("", prompt, count=1)
         prompt = filler_re.sub("", prompt, count=1)
-        prompt = re.sub(r"^[,.:;!—–-]+\\s*", "", prompt)
+        prompt = re.sub(r"^[,.:;!—–-]+\s*", "", prompt)
 
-    return re.sub(r"\\s+", " ", prompt).strip(" \\t\\r\\n,.:;!—–-")
+    return re.sub(r"\s+", " ", prompt).strip(" \t\r\n,.:;!—–-")
 
 
 def can_generate_here(update: Update) -> bool:
