@@ -201,6 +201,18 @@ def generate_and_download(prompt):
                         )
 
                 page = get_project_page(context)
+                # Refresh the project once before each generation so Flow starts
+                # from a clean, current UI state. This does not bypass account
+                # restrictions; if Flow flags suspicious activity, stop the attempt.
+                project_url = page.url
+                log.info("Refreshing Flow project before generation: %s", project_url)
+                page.reload(wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(2500)
+                if "/project/" not in page.url:
+                    raise FlowError(
+                        "После обновления Flow ушёл со страницы проекта. "
+                        f"Текущий URL: {page.url}"
+                    )
                 set_generation_settings(page)
                 prompt_box = page.get_by_role("textbox", name="Что вы хотите создать?")
                 prompt_box.fill(prompt)
