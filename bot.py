@@ -692,7 +692,7 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             last_busy_notice_at[user_key] = now
             await context.bot.send_message(
                 chat_id=chat.id,
-                text=random.choice(BUSY_RESPONSES) + "\\nНе закидывай меня повторами, кожаный. Дай предыдущему запросу закончиться."
+                text=random.choice(BUSY_RESPONSES) + "\nНе закидывай меня повторами. Дай предыдущему запросу закончиться."
             )
         return
     if pending_generations >= MAX_PENDING_GENERATIONS:
@@ -701,7 +701,7 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             last_busy_notice_at[user_key] = now
             await context.bot.send_message(
                 chat_id=chat.id,
-                text=random.choice(BUSY_RESPONSES) + "\\nОчередь переполнена. Попробуй немного позже."
+                text=random.choice(BUSY_RESPONSES) + "\nОчередь переполнена. Попробуй немного позже."
             )
         return
     last_user_request_at[user_key] = now
@@ -752,11 +752,24 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as exc:
                     log.exception("Попытка %s завершилась ошибкой", attempt)
                     if "подозрительную активность" in str(exc).lower() or "suspicious activity" in str(exc).lower():
-                        error_text = random.choice(GENERATION_EXCUSES)
+                        log.warning(
+                            "Flow rejected generation with suspicious-activity warning; "
+                            "automatic retries are disabled for this request."
+                        )
+                        error_text = (
+                            "Flow отклонил запуск и показал предупреждение о подозрительной активности. "
+                            "Я остановил повторы, чтобы не усугублять ситуацию. "
+                            "Это отказ на стороне Flow, а не подтверждение проблемы с твоим промптом. "
+                            "Проверь Flow в браузере; когда предупреждение исчезнет, можно попробовать снова."
+                        )
                         try:
                             await status.edit_text(error_text)
                         except Exception:
-                            log.exception("Не удалось обновить статусное сообщение Telegram")
+                            log.exception("Не удалось показать пользователю отказ Flow")
+                            try:
+                                await context.bot.send_message(chat_id=chat.id, text=error_text)
+                            except Exception:
+                                log.exception("Не удалось отправить сообщение об отказе Flow")
                         return
                     if attempt >= MAX_ATTEMPTS:
                         error_text = random.choice(GENERATION_EXCUSES)
@@ -787,6 +800,23 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pending_generations = max(0, pending_generations - 1)
 
 
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Report whether the Telegram process is responsive without claiming Flow is healthy."""
+    message = update.effective_message
+    if message is None:
+        return
+    session_ready = STATE_PATH.exists() or bool(CDP_URL)
+    queue_state = "занят генерацией" if generation_queue_lock.locked() else "свободен"
+    session_state = "сессия браузера настроена" if session_ready else "не найдена сессия Flow"
+    await message.reply_text(
+        "Я на связи. Telegram-часть работает.\n"
+        f"Браузер: {session_state}.\n"
+        f"Очередь: {queue_state}.\n"
+        "Доступность генерации проверяется только при запуске запроса."
+    )
+
+
 async def on_application_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log Telegram update-handler failures for diagnosis."""
     error = context.error
@@ -804,6 +834,7 @@ def main():
         raise RuntimeError("Задай ALLOWED_CHAT_ID для чата креаторов.")
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("img", handle_prompt))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_prompt))
     app.add_error_handler(on_application_error)
