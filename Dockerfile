@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
-    && python -m playwright install chromium
+    && python -m playwright install chromium chrome
 
 COPY bot.py export_flow_session.py ./
 
