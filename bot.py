@@ -35,7 +35,7 @@ logging.basicConfig(
 log = logging.getLogger("ferixdi-image-bot")
 
 _generation_in_progress = False
-_last_generation_started_at = 0.0
+_last_generation_finished_at = 0.0
 
 
 class GenerationError(Exception):
@@ -72,7 +72,7 @@ async def handle_prompt(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    global _generation_in_progress, _last_generation_started_at
+    global _generation_in_progress, _last_generation_finished_at
 
     message = update.effective_message
     if not message or not is_authorized(update):
@@ -91,8 +91,8 @@ async def handle_prompt(
         )
         return
 
-    elapsed = now - _last_generation_started_at
-    if _last_generation_started_at and elapsed < GENERATION_COOLDOWN_SECONDS:
+    elapsed = now - _last_generation_finished_at
+    if _last_generation_finished_at and elapsed < GENERATION_COOLDOWN_SECONDS:
         wait_seconds = max(1, int(GENERATION_COOLDOWN_SECONDS - elapsed))
         await message.reply_text(
             f"Погоди немного, я от тебя уже устал 🙃 "
@@ -103,7 +103,6 @@ async def handle_prompt(
     # Set the guard before the first await so simultaneous updates cannot
     # start multiple paid tasks at the same time.
     _generation_in_progress = True
-    _last_generation_started_at = now
     status = None
 
     try:
@@ -137,6 +136,7 @@ async def handle_prompt(
             log.exception("Could not send generation error to Telegram")
     finally:
         _generation_in_progress = False
+        _last_generation_finished_at = time.monotonic()
 
 
 def main():
@@ -153,7 +153,7 @@ def main():
 
     log.info(
         "Telegram bot started; provider: Kie AI / GPT Image 2.5; "
-        "user and optional chat restrictions enabled; cooldown=%ss.",
+        "user and optional chat restrictions enabled; cooldown=%ss after each task.",
         GENERATION_COOLDOWN_SECONDS,
     )
     app.run_polling()
