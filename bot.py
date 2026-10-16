@@ -33,6 +33,10 @@ GENERATION_TIMEOUT = 180
 DOWNLOAD_TIMEOUT = 30
 
 logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
+# Telegram API URLs contain the bot token in their path; suppress HTTP client INFO logs
+# so secrets are not copied into Render logs during normal operation.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("flow-telegram-bot")
 browser_lock = Lock()
 generation_queue_lock = asyncio.Lock()
