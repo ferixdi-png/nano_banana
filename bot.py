@@ -39,6 +39,58 @@ class FlowError(Exception):
     pass
 
 
+MASTER_PROMPT = """MASTER PROMPT — AUTHENTIC PHOTOGRAPHIC REALISM, UNIQUE CHARACTERS & NATURAL CAMERA PERSPECTIVE
+
+Create the image described in USER PROMPT below. The user's description is the primary source of truth for subject, identity, appearance, clothing, environment, actions, objects, and scene. Do not arbitrarily change, omit, or contradict those details.
+
+USER PROMPT:
+[USER_PROMPT]
+
+Make the result look like a genuine photograph captured spontaneously in a real environment by an ordinary person's smartphone. Prioritize authenticity, believable physical details, natural visual storytelling, and a thoughtfully chosen but physically plausible camera perspective over perfection, spectacle, or conventional beauty.
+
+AUTHENTIC EVERYDAY PHOTOGRAPHY
+The image should feel like a real moment from someone's camera roll, not a staged photoshoot, commercial stock photo, beauty campaign, fashion editorial, or glossy AI image. Use believable light, exposure, color response, depth, perspective, and natural variations in sharpness. Do not simulate realism by making the image ugly, blurry, noisy, damaged, or poorly exposed.
+
+DISTINCTIVE, BELIEVABLE PEOPLE
+Give newly generated people individually recognizable, internally coherent features: natural facial proportions, subtle asymmetry, distinctive eyes and eyebrows, believable nose and lips, realistic skin tone and texture, individual hairline and strand patterns, and natural expressions and posture. Avoid generic repeated influencer faces, perfect symmetry, plastic skin, and automatic glamour. Do not exaggerate features or invent random blemishes. If the user provides a reference image or specifies a person's appearance, preserve that identity and those characteristics; do not redesign an established person. If several people appear, make their faces and expressions distinct.
+
+NATURAL CAMERA PERSPECTIVE
+Choose an interesting but believable viewpoint suited to the scene instead of defaulting to a centered, straight-on portrait. Consider an off-center standing view, candid three-quarter angle, subtle high or low angle, doorway perspective, side view, foreground depth, wider environmental framing, or natural over-the-shoulder view when appropriate. Vary the choice naturally. Keep perspective physically plausible, body proportions natural, and lens behavior realistic. Avoid forced extreme angles, fisheye distortion, dramatic tilts, and artificial camera tricks unless explicitly requested.
+
+UNSTAGED COMPOSITION
+Make the scene feel observed rather than arranged. Use natural asymmetry, relaxed body language, plausible spacing, and a believable relationship between subject and environment. The subject need not be centered or look at the lens unless requested. Preserve the user's requested pose, action, expression, gaze, and body position. Hands, shoulders, posture, and body weight should behave naturally. Do not add contradictory gestures to manufacture a candid look.
+
+REALISTIC SMARTPHONE OPTICS
+Simulate a contemporary smartphone photograph under the described conditions. Use believable field of view, facial proportions, foreground/background relationships, coherent focus, restrained contrast, natural tonal transitions, and plausible depth of field. Avoid excessive HDR, oversharpening, artificial portrait blur, halos, aggressive clarity, exaggerated bokeh, or synthetic hyper-detail. Do not show a phone, camera, photographer, or equipment unless requested.
+
+SKIN, HAIR, CLOTHING, MATERIALS
+Render skin with age- and lighting-appropriate texture, subtle tonal variation, natural highlights, and realistic shadows—not waxy smoothness or exaggerated pores. Hair should have believable volume, strands, clumping, hairline, gravity, and movement. Clothing should show plausible fabric weight, seams, folds, wrinkles, tension, and fit. Materials such as cotton, denim, wool, metal, glass, and wood should respond to light differently and realistically. Add no random dirt, stains, scratches, or blemishes unless they fit the scene.
+
+NATURAL LIGHT AND COLOR
+Use lighting that belongs in the described location: window light, ordinary indoor illumination, daylight, open shade, sunlight, or street lighting as appropriate. Keep shadow direction, softness, reflections, skin tones, white balance, and color response coherent. Avoid automatic golden-hour light, dramatic rim lighting, studio fill, cinematic teal-orange grading, excessive saturation, or a uniform cinematic palette unless requested.
+
+REAL ENVIRONMENTS AND PHYSICAL CONSISTENCY
+Every visible element must belong naturally in the scene. Maintain coherent geometry, dimensions, perspective, contact, occlusion, reflections, shadows, and depth. Avoid floating or duplicated objects, warped furniture, impossible architecture, melting textures, inconsistent reflections, and unnecessary decorative clutter. Do not fill empty spaces with invented objects just to add detail.
+
+ARTIFACT CONTROL
+Keep anatomy and objects clean and coherent. Avoid extra or missing fingers, fused hands, malformed limbs, incorrect joints, duplicated facial features, distorted eyes or teeth, broken hairlines, repeated patterns, ghosting, accidental duplication, melted textures, unnatural sharpening, and physically impossible lighting or reflections. Natural imperfections are welcome only when plausible; never manufacture defects as a substitute for authenticity.
+
+PRESERVE CREATIVE INTENT
+The user's prompt determines what the image depicts. Preserve requested identities, age characteristics, clothing, accessories, poses, gestures, expressions, activities, environments, and important objects. Do not add unrequested people, props, text, logos, watermarks, or dramatic effects. Where the user leaves creative freedom, use it for distinctive believable details, natural composition, an interesting plausible angle, and authentic environmental context. Respect reference images and all explicit instructions.
+
+FINAL PRIORITIES
+1. Faithfulness to the user prompt and references.
+2. Convincing real-world photographic appearance.
+3. Distinctive, believable individual features.
+4. A naturally interesting, physically plausible camera perspective.
+5. Coherent anatomy, materials, lighting, and environment.
+6. Unstaged composition.
+7. Clean image quality without distracting artifacts.
+
+FINAL OBJECTIVE: Create a distinctive, believable photograph that feels like a real moment captured spontaneously by an ordinary person using a smartphone. It should be interesting without looking deliberately artistic, imperfect without looking damaged, detailed without looking synthetic, and natural without becoming generic."""
+
+
+
 def prepare_storage_state():
     """Materialize a session exported from the user's logged-in local Flow tab."""
     encoded = os.getenv("FLOW_STORAGE_STATE_B64", "").strip()
@@ -118,18 +170,32 @@ def choose_setting(page, option):
 
 
 def set_generation_settings(page):
-    """First prove Flow can generate at all; do not block on fragile aspect/quantity menus."""
+    """Set and verify Nano Banana 2.1, vertical 9:16, and one output."""
     trigger = page.get_by_role("button", name="Триггер настроек")
     trigger_text = trigger.inner_text()
-    log.info("Flow settings trigger: %r", trigger_text)
+    log.info("Flow settings before changes: %r", trigger_text)
     if "Nano Banana 2.1" not in trigger_text:
         raise FlowError(
             "Не удалось подтвердить Nano Banana 2.1 в Flow. "
             f"Текущие настройки: {trigger_text!r}"
         )
-    # Deliberately keep the UI's current image mode, aspect ratio and quantity.
-    # The first goal is to test whether an actual generation can be started.
-    log.info("Flow model verified; keeping current settings for diagnostic generation.")
+
+    # Set portrait ratio and one image using Flow's visible settings menu.
+    if "9:16" not in trigger_text and "crop_9_16" not in trigger_text:
+        choose_setting(page, "9:16")
+    trigger_text = trigger.inner_text()
+    if "x1" not in trigger_text and not re.search(r"(^|\\n)1(\\n|$)", trigger_text):
+        choose_setting(page, "x1")
+
+    verified_text = trigger.inner_text()
+    log.info("Flow settings after changes: %r", verified_text)
+    if "Nano Banana 2.1" not in verified_text:
+        raise FlowError(f"Модель Nano Banana 2.1 не подтверждена перед генерацией: {verified_text!r}")
+    if not ("9:16" in verified_text or "crop_9_16" in verified_text):
+        raise FlowError(f"Не удалось подтвердить вертикальный формат 9:16 перед генерацией: {verified_text!r}")
+    if not ("x1" in verified_text or re.search(r"(^|\\n)1(\\n|$)", verified_text)):
+        raise FlowError(f"Не удалось подтвердить одну генерацию (x1): {verified_text!r}")
+    log.info("Verified Flow settings: Nano Banana 2.1, portrait 9:16, x1.")
 
 
 def image_snapshots(page):
@@ -215,7 +281,12 @@ def generate_and_download(prompt):
                     )
                 set_generation_settings(page)
                 prompt_box = page.get_by_role("textbox", name="Что вы хотите создать?")
-                prompt_box.fill(prompt)
+                combined_prompt = MASTER_PROMPT.replace("[USER_PROMPT]", prompt)
+                prompt_box.fill(combined_prompt)
+                log.info(
+                    "Combined user prompt with photographic realism master prompt (total chars=%s).",
+                    len(combined_prompt),
+                )
                 old_sources = {item.get("src") for item in image_snapshots(page) if item.get("src")}
                 log.info("Prompt filled. Clicking Flow generation button now.")
                 page.get_by_role("button", name="Начать генерацию").click()
