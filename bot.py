@@ -245,31 +245,49 @@ def choose_setting(page, option):
                     continue
         return False
 
-    # First open the model/settings control, where Flow exposes the model,
-    # aspect ratio and output-count choices.
+    # The model chip itself opens Flow's generation-parameter panel.
+    # Prefer clicking the visible Nano Banana label, rather than blindly
+    # toggling the whole settings trigger (which can close an already-open panel).
+    model_label = page.get_by_text(re.compile(r"Nano Banana\\s*2\\.1", re.IGNORECASE))
+    try:
+        visible_model = next(
+            (model_label.nth(i) for i in range(min(model_label.count(), 8))
+             if model_label.nth(i).is_visible()),
+            None,
+        )
+        if visible_model is not None:
+            visible_model.click(timeout=5000)
+            page.wait_for_timeout(600)
+    except Exception:
+        log.exception("Could not open Flow settings by clicking the Nano Banana model label")
+
+    if click_visible_candidate():
+        return
+
+    # Fallback: the settings trigger can open the same panel in other UI versions.
     try:
         trigger.click(timeout=5000)
-        page.wait_for_timeout(500)
+        page.wait_for_timeout(600)
     except Exception:
         pass
 
     if click_visible_candidate():
         return
 
-    # In some Flow layouts the output-count chip (currently x2) opens its own
-    # selector. Click that chip and look for x1 in the newly opened menu.
+    # Some layouts expose the current x2 chip as the control that opens
+    # the output-count menu. Click it and then select x1 from the menu.
     if option == "x1":
         current_count = page.get_by_text("x2", exact=True)
         try:
             for index in range(min(current_count.count(), 8)):
                 item = current_count.nth(index)
                 if item.is_visible():
-                    item.click(timeout=3000)
-                    page.wait_for_timeout(400)
+                    item.click(timeout=5000)
+                    page.wait_for_timeout(600)
                     if click_visible_candidate():
                         return
         except Exception:
-            pass
+            log.exception("Could not open Flow output-count selector from x2")
 
     try:
         menu_text = page.locator("body").inner_text()[-2500:]
