@@ -265,7 +265,12 @@ async def handle_prompt(
         if has_input_image:
             file_id = message.photo[-1].file_id if has_photo else message.document.file_id
             telegram_file = await context.bot.get_file(file_id)
-            input_image_path = OUTPUT_DIR / f"input_{message.chat_id}_{message.message_id}.img"
+            suffix = ".jpg"
+            if image_document and message.document.file_name:
+                candidate_suffix = Path(message.document.file_name).suffix.lower()
+                if candidate_suffix in {".jpg", ".jpeg", ".png", ".webp"}:
+                    suffix = candidate_suffix
+            input_image_path = OUTPUT_DIR / f"input_{message.chat_id}_{message.message_id}{suffix}"
             await telegram_file.download_to_drive(custom_path=str(input_image_path))
             if not input_image_path.exists() or input_image_path.stat().st_size == 0:
                 raise GenerationError("Не удалось скачать исходное фото из Telegram.")
