@@ -221,45 +221,68 @@ def get_project_page(context):
 
 
 def choose_setting(page, option):
-    """Choose a Flow setting even if its menu label contains extra descriptive text."""
+    """Open Flow's model/settings panel and choose a visible option."""
     trigger = page.get_by_role("button", name="Триггер настроек")
-    trigger.click()
-    page.wait_for_timeout(500)
-
-    # Flow's labels can vary slightly between UI versions/locales.
     candidates = [option]
     if option == "9:16":
         candidates.extend(["crop_9_16", "Portrait", "Портрет"])
     elif option == "x1":
-        candidates.extend(["x 1", "1 image", "1 изображение"])
+        candidates.extend(["x1", "x 1", "1 image", "1 изображение"])
 
-    for candidate in candidates:
-        exact = page.get_by_text(candidate, exact=True)
-        if exact.count():
-            exact.first.click(timeout=8000)
-            page.wait_for_timeout(400)
-            return
+    def click_visible_candidate():
+        for candidate in candidates:
+            exact = page.get_by_text(candidate, exact=True)
+            for locator in (exact, page.get_by_text(re.compile(re.escape(candidate), re.IGNORECASE))):
+                try:
+                    count = locator.count()
+                    for index in range(min(count, 8)):
+                        item = locator.nth(index)
+                        if item.is_visible():
+                            item.click(timeout=3000)
+                            page.wait_for_timeout(500)
+                            return True
+                except Exception:
+                    continue
+        return False
 
-        partial = page.get_by_text(re.compile(re.escape(candidate), re.IGNORECASE))
-        if partial.count():
-            partial.first.click(timeout=8000)
-            page.wait_for_timeout(400)
-            return
-
-    # Include a short DOM snapshot in the error so the next failure tells us
-    # which options Flow actually rendered instead of only timing out.
+    # First open the model/settings control, where Flow exposes the model,
+    # aspect ratio and output-count choices.
     try:
-        menu_text = page.locator("body").inner_text()[-3500:]
+        trigger.click(timeout=5000)
+        page.wait_for_timeout(500)
+    except Exception:
+        pass
+
+    if click_visible_candidate():
+        return
+
+    # In some Flow layouts the output-count chip (currently x2) opens its own
+    # selector. Click that chip and look for x1 in the newly opened menu.
+    if option == "x1":
+        current_count = page.get_by_text("x2", exact=True)
+        try:
+            for index in range(min(current_count.count(), 8)):
+                item = current_count.nth(index)
+                if item.is_visible():
+                    item.click(timeout=3000)
+                    page.wait_for_timeout(400)
+                    if click_visible_candidate():
+                        return
+        except Exception:
+            pass
+
+    try:
+        menu_text = page.locator("body").inner_text()[-2500:]
     except Exception:
         menu_text = "(не удалось прочитать текст страницы)"
     raise FlowError(
-        f"В меню настроек Flow не найден вариант «{option}». "
-        f"Текст страницы в конце меню: {menu_text}"
+        f"Не удалось выбрать параметр «{option}» в настройках Flow. "
+        f"Видимый текст страницы: {menu_text}"
     )
 
 
 def set_generation_settings(page):
-    """Set and verify Nano Banana 2.1, vertical 9:16, and one output."""
+    """Set and verify Nano Banana 2.1, portrait 9:16, and exactly one output."""
     trigger = page.get_by_role("button", name="Триггер настроек")
     trigger_text = trigger.inner_text()
     log.info("Flow settings before changes: %r", trigger_text)
@@ -269,11 +292,12 @@ def set_generation_settings(page):
             f"Текущие настройки: {trigger_text!r}"
         )
 
-    # Set portrait ratio and one image using Flow's visible settings menu.
+    # Open the model/settings panel once, then choose the aspect ratio and count.
     if "9:16" not in trigger_text and "crop_9_16" not in trigger_text:
         choose_setting(page, "9:16")
+
     trigger_text = trigger.inner_text()
-    if "x1" not in trigger_text and not any(line.strip() == "1" for line in trigger_text.splitlines()):
+    if not re.search(r"(?m)^x1$", trigger_text) and not re.search(r"(?m)^1$", trigger_text):
         choose_setting(page, "x1")
 
     verified_text = trigger.inner_text()
@@ -282,8 +306,11 @@ def set_generation_settings(page):
         raise FlowError(f"Модель Nano Banana 2.1 не подтверждена перед генерацией: {verified_text!r}")
     if not ("9:16" in verified_text or "crop_9_16" in verified_text):
         raise FlowError(f"Не удалось подтвердить вертикальный формат 9:16 перед генерацией: {verified_text!r}")
-    if not ("x1" in verified_text or any(line.strip() == "1" for line in verified_text.splitlines())):
-        raise FlowError(f"Не удалось подтвердить одну генерацию (x1): {verified_text!r}")
+    if not re.search(r"(?m)^x1$", verified_text) and not re.search(r"(?m)^1$", verified_text):
+        raise FlowError(
+            "Flow не подтвердил генерацию ровно одного изображения; запуск отменён. "
+            f"Текущие настройки: {verified_text!r}"
+        )
     log.info("Verified Flow settings: Nano Banana 2.1, portrait 9:16, x1.")
 
 
