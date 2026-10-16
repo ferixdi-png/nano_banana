@@ -109,7 +109,7 @@ def _request_json(url: str, method: str = "GET", payload: dict | None = None) ->
 def _extract_urls(value):
     """Extract result URLs from the common Kie task-result response shapes."""
     urls = []
-    url_keys = {"resulturls", "imageurls", "images", "imageurl", "outputurl", "url"}
+    url_keys = {"resulturls", "imageurls", "images", "imageurl", "outputurl", "downloadurl", "fileurl", "url"}
 
     def walk(node):
         if isinstance(node, dict):
@@ -182,22 +182,73 @@ def _get_task(task_id: str) -> dict:
 
 
 def _wait_for_result(task_id: str) -> str:
+    """Poll Kie by the exact taskId; tolerate transient API/network failures."""
     deadline = time.monotonic() + TASK_TIMEOUT_SECONDS
     last_state = "unknown"
+    consecutive_errors = 0
+    logged_state = None
 
     while time.monotonic() < deadline:
-        response = _get_task(task_id)
+        try:
+            response = _get_task(task_id)
+            consecutive_errors = 0
+        except bot.GenerationError as exc:
+            message = str(exc)
+            transient = (
+                "Не удалось связаться с Kie AI" in message
+                or "HTTP 429" in message
+                or any(f"HTTP {code}" in message for code in (500, 502, 503, 504))
+                or "(код 429)" in message
+                or "(код 500)" in message
+                or "(код 502)" in message
+                or "(код 503)" in message
+                or "(код 504)" in message
+            )
+            if not transient:
+                raise
+            consecutive_errors += 1
+            delay = min(15, max(POLL_INTERVAL_SECONDS, 2 ** min(consecutive_errors, 4)))
+            log.warning(
+                "Temporary Kie status-check error for task_id=%s; retry=%s in %ss: %s",
+                task_id, consecutive_errors, delay, message[:220]
+            )
+            time.sleep(min(delay, max(0, deadline - time.monotonic())))
+            continue
+
         data = _task_data(response)
+        returned_task_id = str(data.get("taskId") or data.get("task_id") or "").strip()
+        if returned_task_id and returned_task_id != task_id:
+            raise bot.GenerationError(
+                "Kie AI вернул данные другой задачи. Результат не будет отправлен, "
+                f"чтобы не перепутать изображения. Ожидался taskId={task_id}, "
+                f"получен taskId={returned_task_id}."
+            )
+
         state = str(data.get("state") or data.get("status") or "").strip().lower()
         if state:
             last_state = state
+        if state != logged_state:
+            log.info("Kie task status: task_id=%s state=%s", task_id, state or "missing")
+            logged_state = state
 
         if state in {"success", "succeeded", "completed", "complete", "finished"}:
-            urls = _extract_urls(data.get("resultJson", data))
+            result_payload = data.get("resultJson")
+            urls = _extract_urls(result_payload) if result_payload is not None else []
             if not urls:
                 urls = _extract_urls(data)
             if urls:
+                log.info("Kie task completed with result URL: task_id=%s", task_id)
                 return urls[0]
+            # Kie may publish state before resultJson becomes readable; re-query briefly.
+            consecutive_errors += 1
+            if consecutive_errors <= 5 and time.monotonic() < deadline:
+                log.warning(
+                    "Kie task is successful but result URL is not present yet; "
+                    "rechecking task_id=%s attempt=%s",
+                    task_id, consecutive_errors
+                )
+                time.sleep(min(2, max(0, deadline - time.monotonic())))
+                continue
             raise bot.GenerationError(
                 "Kie AI отметил задачу успешной, но не вернул ссылку на изображение. "
                 f"Task ID: {task_id}"
@@ -216,7 +267,7 @@ def _wait_for_result(task_id: str) -> str:
                 f"Task ID: {task_id}"
             )
 
-        time.sleep(POLL_INTERVAL_SECONDS)
+        time.sleep(min(POLL_INTERVAL_SECONDS, max(0, deadline - time.monotonic())))
 
     raise bot.GenerationError(
         f"Kie AI не завершил генерацию за {TASK_TIMEOUT_SECONDS} секунд. "
