@@ -145,17 +145,24 @@ def choose_setting(page, option):
     page.wait_for_timeout(500)
 
     # Flow's labels can vary slightly between UI versions/locales.
-    exact = page.get_by_text(option, exact=True)
-    if exact.count():
-        exact.first.click(timeout=8000)
-        page.wait_for_timeout(400)
-        return
+    candidates = [option]
+    if option == "9:16":
+        candidates.extend(["crop_9_16", "Portrait", "Портрет"])
+    elif option == "x1":
+        candidates.extend(["x 1", "1 image", "1 изображение"])
 
-    partial = page.get_by_text(re.compile(re.escape(option), re.IGNORECASE))
-    if partial.count():
-        partial.first.click(timeout=8000)
-        page.wait_for_timeout(400)
-        return
+    for candidate in candidates:
+        exact = page.get_by_text(candidate, exact=True)
+        if exact.count():
+            exact.first.click(timeout=8000)
+            page.wait_for_timeout(400)
+            return
+
+        partial = page.get_by_text(re.compile(re.escape(candidate), re.IGNORECASE))
+        if partial.count():
+            partial.first.click(timeout=8000)
+            page.wait_for_timeout(400)
+            return
 
     # Include a short DOM snapshot in the error so the next failure tells us
     # which options Flow actually rendered instead of only timing out.
