@@ -437,13 +437,22 @@ def create_new_project(context):
             "Flow показывает предупреждение о подозрительной активности уже на главной странице. "
             "Остановили запуск и не создаём новые проекты автоматически."
         )
+    # Do not treat a generic "Sign in" link in Flow's public navigation as
+    # an authentication failure. The marketing /about page contains navigation
+    # and subscription text even when a project route redirects there. Only stop
+    # when the page explicitly says that authentication is required.
     if any(marker in body_lower for marker in (
-        "войдите в аккаунт",
+        "sign in to continue",
+        "please sign in to continue",
+        "you need to sign in",
+        "sign in with google",
+        "войдите, чтобы продолжить",
         "нужно войти в аккаунт",
-        "sign in",
+        "войдите в аккаунт, чтобы продолжить",
+        "требуется авторизация",
     )):
         raise FlowError(
-            "Flow требует авторизацию перед созданием проекта. "
+            "Flow явно требует авторизацию перед созданием проекта. "
             "Проверь авторизованную сессию. Текст страницы: " + body_text[-1200:]
         )
 
