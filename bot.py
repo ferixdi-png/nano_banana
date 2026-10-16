@@ -104,12 +104,12 @@ async def handle_prompt(
     # start multiple paid tasks at the same time.
     _generation_in_progress = True
     _last_generation_started_at = now
-
-    status = await message.reply_text(
-        "Промпт принял. Передаю в GPT Image 2.5 — это может занять немного времени."
-    )
+    status = None
 
     try:
+        status = await message.reply_text(
+            "Промпт принял. Передаю в GPT Image 2.5 — это может занять немного времени."
+        )
         path = await asyncio.to_thread(generate_and_download, prompt)
 
         with path.open("rb") as image_file:
@@ -122,17 +122,19 @@ async def handle_prompt(
     except Exception as exc:
         log.exception("Image generation failed")
         safe_message = str(exc).strip()[:900] or "Неизвестная ошибка."
+        error_text = (
+            "Не получилось завершить генерацию. "
+            "Я не запускал повторную платную задачу автоматически, чтобы "
+            "не списывать кредиты второй раз.\n\n"
+            f"Что произошло: {safe_message}"
+        )
         try:
-            await status.edit_text(
-                "Не получилось завершить генерацию. "
-                "Я не запускал повторную платную задачу автоматически, чтобы "
-                "не списывать кредиты второй раз.\n\n"
-                f"Что произошло: {safe_message}"
-            )
+            if status:
+                await status.edit_text(error_text)
+            else:
+                await message.reply_text(error_text)
         except Exception:
-            await message.reply_text(
-                f"Не получилось завершить генерацию: {safe_message}"
-            )
+            log.exception("Could not send generation error to Telegram")
     finally:
         _generation_in_progress = False
 
