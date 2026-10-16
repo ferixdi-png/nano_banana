@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -13,7 +14,8 @@ import bot
 API_KEY = os.getenv("KIE_API_KEY", "").strip()
 API_BASE_URL = os.getenv("KIE_API_BASE_URL", "https://api.kie.ai").strip().rstrip("/")
 MODEL = "gpt-image-2-5-sunburst-image-to-image"
-ASPECT_RATIO = "9:16"
+DEFAULT_ASPECT_RATIO = "9:16"
+ASPECT_RATIOS = ("27:16", "16:27", "21:9", "16:9", "9:16", "3:2", "2:3", "4:3", "3:4", "1:1", "9:8", "8:9")
 RESOLUTION = "1K"
 BACKGROUND = "auto"
 POLL_INTERVAL_SECONDS = 2
@@ -21,6 +23,38 @@ TASK_TIMEOUT_SECONDS = 360
 HTTP_TIMEOUT_SECONDS = 60
 
 log = logging.getLogger("kie-image-runner")
+
+
+def _detect_aspect_ratio(prompt: str) -> str:
+    """Honor an explicitly requested supported ratio; otherwise default to portrait."""
+    normalized = prompt.lower().replace("×", "x")
+
+    # Explicit ratio notation, allowing spaces around the colon.
+    for ratio in ASPECT_RATIOS:
+        width, height = ratio.split(":")
+        pattern = rf"(?<!\d){width}\s*:\s*{height}(?!\d)"
+        if re.search(pattern, normalized):
+            return ratio
+
+    # Common explicit dimension notation, converted to the nearest supported ratio.
+    dimensions = re.search(r"(?<!\d)(\d{3,5})\s*x\s*(\d{3,5})(?!\d)", normalized)
+    if dimensions:
+        width, height = int(dimensions.group(1)), int(dimensions.group(2))
+        if width > 0 and height > 0:
+            requested = width / height
+            return min(
+                ASPECT_RATIOS,
+                key=lambda ratio: abs(requested - int(ratio.split(":")[0]) / int(ratio.split(":")[1])),
+            )
+
+    if re.search(r"\b(square|квадрат(?:ный|ное|ная)?|1:1)\b", normalized):
+        return "1:1"
+    if re.search(r"\b(landscape|горизонтальн\w*)\b", normalized):
+        return "16:9"
+    if re.search(r"\b(portrait|вертикальн\w*)\b", normalized):
+        return "9:16"
+
+    return DEFAULT_ASPECT_RATIO
 
 
 def _request_json(url: str, method: str = "GET", payload: dict | None = None) -> dict:
@@ -104,7 +138,6 @@ def _extract_urls(value):
                 pass
 
     walk(value)
-    # Preserve order and avoid duplicate downloads.
     return list(dict.fromkeys(urls))
 
 
@@ -116,15 +149,17 @@ def _task_data(response: dict) -> dict:
 
 
 def _create_task(prompt: str) -> str:
+    aspect_ratio = _detect_aspect_ratio(prompt)
     payload = {
         "model": MODEL,
         "input": {
             "prompt": prompt,
-            "aspect_ratio": ASPECT_RATIO,
+            "aspect_ratio": aspect_ratio,
             "resolution": RESOLUTION,
             "background": BACKGROUND,
         },
     }
+    log.info("Using image aspect ratio: %s", aspect_ratio)
     response = _request_json(
         f"{API_BASE_URL}/api/v1/jobs/createTask",
         method="POST",
