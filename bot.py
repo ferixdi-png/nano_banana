@@ -8,6 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from telegram import Update
+from telegram.request import HTTPXRequest
+from telegram.error import TimedOut
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -26,7 +28,7 @@ ALLOWED_CHAT_ID_RAW = os.getenv("ALLOWED_CHAT_ID", "").strip()
 ALLOWED_CHAT_ID = int(ALLOWED_CHAT_ID_RAW) if ALLOWED_CHAT_ID_RAW else None
 
 GENERATION_COOLDOWN_SECONDS = 25
-# Only explicit image-creation requests trigger a paid generation.
+# Only explicit image-creation requests trigger generation.
 IMAGE_INTENT_RE = re.compile(
     r"\b(?:сгенерируй(?:-ка)?|сгенерировать|генерируй|генерировать|"
     r"нарисуй|нарисовать|изобрази|изобразить|"
@@ -45,6 +47,8 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
     level=logging.INFO,
 )
+# HTTP client INFO logs include full Telegram API URLs; keep bot tokens out of logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("ferixdi-image-bot")
 
 _generation_in_progress = False
@@ -63,8 +67,8 @@ START_PRIVATE_LINES = [
 ]
 START_GROUP_LINES = [
     "Так, кожаные, открываем художественный цех. Я — ваш пиксельный демон, но с лимитом терпения и без берета.",
-    "Добро пожаловать в мастерскую, где слова превращаются в картинки, а GPU иногда смотрит на нас с укором.",
-    "На связи ваш карманный художник GPT Image 2.5. Руки у меня виртуальные, зато амбиции в разрешении 1K.",
+    "Добро пожаловать в мастерскую, где даже самая безумная идея может стать картинкой.",
+    "На связи ваш карманный художник. Руки виртуальные, фантазия без выходных.",
 ]
 BUSY_LINES = [
     "Кожаный, по одному шедевру за раз. Я ещё предыдущий пиксельный суп не разлил по холсту.",
@@ -79,8 +83,8 @@ COOLDOWN_LINES = [
     "Я уже бегу, но мои пиксели пока завязывают шнурки. Подожди {seconds} сек.",
 ]
 PROGRESS_LINES = [
-    "Промпт принят. GPT Image 2.5 уже раскладывает твою идею на пиксели. Не мешай магии выглядеть как вычисления.",
-    "Так, кожаный, запускаю GPT Image 2.5 в 1K. Внутри сервера сейчас совещание пикселей без протокола.",
+    "Идею поймал. Сейчас превращу её в картинку — держись, искусство уже надевает рабочие штаны.",
+    "Так, кожаный, запускаю художественную магию. Внутри сейчас совещание пикселей без протокола.",
     "Задачу поймал. Отправляю задумку в цифровую кухню — надеюсь, сегодня без подгорания реальности.",
     "Начинаю колдовать. Если услышишь тихий шум вентилятора — это мои нейроны драматично работают.",
 ]
@@ -92,10 +96,15 @@ SUCCESS_LINES = [
     "Готово. Я сделал вид, что всё было легко. Ты сделай вид, что не сомневался.",
 ]
 ERROR_LINES = [
-    "Пиксельный форс-мажор: генерация не завершилась. Я не стану запускать её повторно автоматически, чтобы не сжечь твои кредиты.",
-    "Тут серверный сюрприз, и, увы, не тот, который можно повесить на стену. Генерация не завершилась; повторно платную задачу сам не запускаю.",
-    "Мои цифровые гномы уронили гаечный ключ. Картинка не готова, но я не буду повторять платный запуск без команды.",
-    "Неудачный раунд, кожаный. Генерация споткнулась на серверной стороне; автоматически тратить кредиты второй раз не стану.",
+    "Ой, сегодня картинка не сложилась. Даже у цифровых художников бывает день «ну вот опять». Попробуй ещё раз чуть позже.",
+    "Кажется, мои художественные способности ушли за кофе и пока не вернулись. Давай попробуем ещё раз чуть позже.",
+    "Творческий затык! Я уже мысленно надел берет, но холст пока пустой. Попробуй ещё раз чуть позже.",
+    "Не получилось с первого раза, кожаный. Не драматизируем — даже у шедевров бывают сложные роды.",
+]
+DELIVERY_ERROR_LINES = [
+    "Картинка уже готова, но Telegram зажал дверь на выходе. Попробуй попросить её ещё раз чуть позже.",
+    "Шедевр нарисован, но доставщик сегодня явно перепутал адрес. Не получилось отправить картинку — попробуй ещё раз чуть позже.",
+    "Картина готова, а вот доставка споткнулась о порог. Попробуй ещё раз чуть позже — не будем объявлять пиксели в розыск.",
 ]
 
 
@@ -197,24 +206,35 @@ async def handle_prompt(
         status = await message.reply_text(random.choice(PROGRESS_LINES))
         path = await asyncio.to_thread(generate_and_download, prompt)
 
-        with path.open("rb") as image_file:
-            await message.reply_photo(
-                photo=image_file,
-                caption=(
-                    f"{random.choice(SUCCESS_LINES)}\n\n"
-                    "GPT Image 2.5 · 1K · 9:16"
-                ),
-                reply_to_message_id=message.message_id,
-            )
+        try:
+            for attempt in range(2):
+                try:
+                    with path.open("rb") as image_file:
+                        await message.reply_photo(
+                            photo=image_file,
+                            caption=random.choice(SUCCESS_LINES),
+                            reply_to_message_id=message.message_id,
+                            read_timeout=120,
+                            write_timeout=120,
+                            connect_timeout=20,
+                            pool_timeout=20,
+                        )
+                    break
+                except TimedOut:
+                    if attempt == 1:
+                        raise
+                    log.warning("Telegram image upload timed out; retrying once")
+                    await asyncio.sleep(1)
+        except Exception:
+            log.exception("Image was generated but Telegram delivery failed")
+            await status.edit_text(random.choice(DELIVERY_ERROR_LINES))
+            return
+
         await status.delete()
 
     except Exception:
         log.exception("Image generation failed")
-        error_text = (
-            f"{random.choice(ERROR_LINES)}\n\n"
-            "Попробуй ещё раз чуть позже. Если сбой повторится, лучше проверить логи — "
-            "не будем лечить сервер шаманством и повторными списаниями."
-        )
+        error_text = random.choice(ERROR_LINES)
         try:
             if status:
                 await status.edit_text(error_text)
@@ -236,7 +256,28 @@ def main():
             "Укажи числовой ID целевой Telegram-группы, не личный ID пользователя."
         )
 
-    app = Application.builder().token(TOKEN).build()
+    telegram_request = HTTPXRequest(
+        connection_pool_size=16,
+        connect_timeout=20,
+        read_timeout=120,
+        write_timeout=120,
+        media_write_timeout=120,
+        pool_timeout=20,
+    )
+    polling_request = HTTPXRequest(
+        connection_pool_size=4,
+        connect_timeout=20,
+        read_timeout=45,
+        write_timeout=20,
+        pool_timeout=20,
+    )
+    app = (
+        Application.builder()
+        .token(TOKEN)
+        .request(telegram_request)
+        .get_updates_request(polling_request)
+        .build()
+    )
     app.add_handler(CommandHandler("start", start))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_prompt)
@@ -245,7 +286,7 @@ def main():
     log.info(
         "Telegram bot started; provider: Kie AI / GPT Image 2.5; "
         "group access enabled for chat_id=%s; admin private access for user_id=%s; "
-        "cooldown=%ss after each task; explicit image intent required; resolution=1K.",
+        "cooldown=%ss after each task; explicit image intent required.",
         ALLOWED_CHAT_ID,
         ALLOWED_USER_ID,
         GENERATION_COOLDOWN_SECONDS,
