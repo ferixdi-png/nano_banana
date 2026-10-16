@@ -786,6 +786,17 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         pending_generations = max(0, pending_generations - 1)
 
+
+async def on_application_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log Telegram update-handler failures for diagnosis."""
+    error = context.error
+    log.error(
+        "Unhandled Telegram update error; update_type=%s",
+        type(update).__name__ if update is not None else "None",
+        exc_info=(type(error), error, error.__traceback__) if error else None,
+    )
+
+
 def main():
     if not TOKEN:
         raise RuntimeError("Не задан TELEGRAM_BOT_TOKEN.")
@@ -795,6 +806,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("img", handle_prompt))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_prompt))
+    app.add_error_handler(on_application_error)
     log.info("Telegram-бот запускается.")
     external_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
     port = int(os.getenv("PORT", "10000"))
