@@ -126,20 +126,20 @@ def clean_generation_prompt(message_text: str) -> str:
     prompt = BOT_NAME_RE.sub(" ", message_text)
     # Remove command phrasing only at the beginning; keep the user's actual visual description.
     prompt = re.sub(
-        r"^\\s*(?:[,.:;!—–-]+\\s*)*"
+        r"^\s*(?:[,.:;!—–-]+\s*)*"
         r"(?:сгенерируй(?:-ка)?|сгенерировать|генерируй|генерировать|"
         r"нарисуй|нарисовать|изобрази|изобразить|"
-        r"создай|сделай|сделать)\\b\\s*"
-        r"(?:(?:изображение|картинку|фото|картинку-фото)\\b\\s*)*"
-        r"[,.:;!—–-]*\\s*",
+        r"создай|сделай|сделать)\b\s*"
+        r"(?:(?:изображение|картинку|фото|картинку-фото)\b\s*)*"
+        r"[,.:;!—–-]*\s*",
         "",
         prompt,
         count=1,
         flags=re.IGNORECASE,
     )
     # Strip a leading English prompt label if used as a command prefix.
-    prompt = re.sub(r"^\\s*prompt\\s*[:—–-]?\\s*", "", prompt, count=1, flags=re.IGNORECASE)
-    return re.sub(r"\\s+", " ", prompt).strip(" \\t\\r\\n,.:;!—–-")
+    prompt = re.sub(r"^\s*prompt\s*[:—–-]?\s*", "", prompt, count=1, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", prompt).strip(" \t\r\n,.:;!—–-")
 
 
 def can_generate_here(update: Update) -> bool:
