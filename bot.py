@@ -17,6 +17,7 @@ load_dotenv()
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", "0"))
+ALLOWED_CHAT_ID = int(os.getenv("ALLOWED_CHAT_ID", "0"))
 CDP_URL = os.getenv("CDP_URL", "http://127.0.0.1:9222" if os.name == "nt" else "").strip()  # Local Windows default; leave unset on Render
 FLOW_PROJECT_URL = os.getenv("FLOW_PROJECT_URL", "").strip()
 PROFILE_DIR = Path(os.getenv("FLOW_PROFILE_DIR", "/var/data/flow-profile"))
@@ -197,21 +198,56 @@ def generate_and_download(prompt):
                     browser.close()
 
 
+def is_allowed(update: Update) -> bool:
+    """Allow the configured Telegram group, plus the configured owner in private chat."""
+    message = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if not message or not user or not chat:
+        return False
+    if chat.type in ("group", "supergroup"):
+        return bool(ALLOWED_CHAT_ID and chat.id == ALLOWED_CHAT_ID)
+    return bool(ALLOWED_USER_ID and user.id == ALLOWED_USER_ID and chat.type == "private")
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user and update.effective_user.id == ALLOWED_USER_ID:
+    if is_allowed(update):
         await update.effective_message.reply_text(
-            "Отправь промпт текстом — сгенерирую изображение в Nano Banana 2.1, 9:16, x1 и скачаю в 1K."
+            "Я на связи. Для генерации напиши: «сгенерируй изображение …» или /img и опиши результат."
         )
 
 
 async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
-    user = update.effective_user
-    if not user or user.id != ALLOWED_USER_ID or not message:
+    if not is_allowed(update) or not message:
         return
     prompt = (message.text or "").strip()
     if not prompt:
         return
+    is_group = update.effective_chat.type in ("group", "supergroup")
+    if is_group:
+        # In group chats, generate only when explicitly requested to avoid turning every message into a paid generation.
+        command_prompt = re.match(r"^/img(?:@\\w+)?\\s*(.*)$", prompt, flags=re.IGNORECASE | re.DOTALL)
+        explicit_request = re.search(
+            r"\\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\\b",
+            prompt,
+            flags=re.IGNORECASE,
+        )
+        if command_prompt:
+            prompt = command_prompt.group(1).strip()
+        elif explicit_request:
+            prompt = re.sub(
+                r"^.*?\\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\\b[:,!\\s-]*",
+                "",
+                prompt,
+                count=1,
+                flags=re.IGNORECASE | re.DOTALL,
+            ).strip()
+        else:
+            return
+        if not prompt:
+            await message.reply_text("Опиши, какое изображение нужно создать.")
+            return
     status = await message.reply_text("Принял промпт. Запускаю генерацию в Flow…")
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
@@ -234,8 +270,8 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     if not TOKEN:
         raise RuntimeError("Не задан TELEGRAM_BOT_TOKEN.")
-    if not ALLOWED_USER_ID:
-        raise RuntimeError("Не задан ALLOWED_USER_ID.")
+    if not ALLOWED_USER_ID and not ALLOWED_CHAT_ID:
+        raise RuntimeError("Задай ALLOWED_USER_ID и/или ALLOWED_CHAT_ID.")
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_prompt))
