@@ -493,9 +493,28 @@ def create_new_project(context):
             log.exception("Could not click a labelled Flow new-project tile")
 
     if not clicked:
+        # UI labels can differ across Flow's old and migrated frontends. Try the
+        # documented direct-new-project route on both origins before giving up.
+        for new_url in (
+            "https://flow.google.com/project/new",
+            "https://labs.google/fx/tools/flow/project/new",
+        ):
+            try:
+                log.info("No visible new-project control; trying direct route %s", new_url)
+                page.goto(new_url, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(4000)
+                composer = page.get_by_role("textbox", name=re.compile(r"Что вы хотите создать|Describe|prompt", re.I))
+                if re.search(r"/project/[^/?#]+", page.url) and composer.count() and composer.first.is_visible():
+                    log.info("Opened a fresh Flow project through direct route: %s", page.url)
+                    return page
+                body_text = page.locator("body").inner_text()
+            except Exception as exc:
+                log.warning("Direct new-project route failed at %s: %s", new_url, exc)
+
+    if not clicked:
         raise FlowError(
-            "Не нашёл на главной странице Flow элемент создания нового проекта. "
-            "Автоматическую генерацию остановил, чтобы случайно не запустить генерацию в старом проекте. "
+            "Flow не показал создание проекта и прямой маршрут нового проекта не открыл редактор. "
+            "Проверь авторизацию и доступность Flow. "
             f"URL: {page.url}. Текст страницы: {body_text[-1800:]}"
         )
 
