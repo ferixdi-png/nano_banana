@@ -93,7 +93,7 @@ GENERATION_ACKNOWLEDGEMENTS = [
     "Поехали. Сейчас у твоего описания появится визуальная форма.",
 ]
 
-class FlowError(Exception):class FlowError(Exception):
+class FlowError(Exception):
     pass
 
 
