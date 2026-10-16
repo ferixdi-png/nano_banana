@@ -20,3 +20,9 @@ services:
         sync: false
       - key: FLOW_STORAGE_STATE_B64
         sync: false
+      - key: FLOW_GOOGLE_EMAIL
+        sync: false
+      - key: FLOW_GOOGLE_PASSWORD
+        sync: false
+      - key: FLOW_GOOGLE_TOTP_SECRET
+        sync: false
