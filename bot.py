@@ -227,9 +227,9 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_group = update.effective_chat.type in ("group", "supergroup")
     if is_group:
         # In group chats, generate only when explicitly requested to avoid turning every message into a paid generation.
-        command_prompt = re.match(r"^/img(?:@\\w+)?\\s*(.*)$", prompt, flags=re.IGNORECASE | re.DOTALL)
+        command_prompt = re.match(r"^/img(?:@\w+)?\s*(.*)$", prompt, flags=re.IGNORECASE | re.DOTALL)
         explicit_request = re.search(
-            r"\\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\\b",
+            r"\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\b",
             prompt,
             flags=re.IGNORECASE,
         )
@@ -237,7 +237,7 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             prompt = command_prompt.group(1).strip()
         elif explicit_request:
             prompt = re.sub(
-                r"^.*?\\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\\b[:,!\\s-]*",
+                r"^.*?\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\b[:,!\s-]*",
                 "",
                 prompt,
                 count=1,
