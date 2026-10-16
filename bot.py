@@ -246,35 +246,58 @@ async def handle_prompt(
         status = await message.reply_text(random.choice(PROGRESS_LINES))
         path = await asyncio.to_thread(generate_and_download, cleaned_prompt)
 
+        # Send directly to the chat, not as a reply to the source message.
+        # This avoids Telegram rejecting delivery when the original message is missing.
+        caption = random.choice(SUCCESS_LINES)
         try:
-            for attempt in range(2):
+            try:
+                with path.open("rb") as image_file:
+                    await context.bot.send_photo(
+                        chat_id=message.chat_id,
+                        photo=image_file,
+                        caption=caption,
+                        read_timeout=120,
+                        write_timeout=120,
+                        connect_timeout=20,
+                        pool_timeout=20,
+                    )
+                log.info("Image delivered successfully to Telegram chat_id=%s", message.chat_id)
+            except BadRequest as photo_error:
+                # Some generated images exceed Telegram's photo constraints; send as a file instead.
+                log.warning("Telegram rejected photo upload; retrying as document: %s", photo_error)
+                with path.open("rb") as image_file:
+                    await context.bot.send_document(
+                        chat_id=message.chat_id,
+                        document=image_file,
+                        caption=caption,
+                        read_timeout=120,
+                        write_timeout=120,
+                        connect_timeout=20,
+                        pool_timeout=20,
+                    )
+                log.info("Image delivered as document to Telegram chat_id=%s", message.chat_id)
+        except TimedOut:
+            log.exception("Telegram upload timed out; retrying delivery once")
+            try:
+                with path.open("rb") as image_file:
+                    await context.bot.send_photo(
+                        chat_id=message.chat_id,
+                        photo=image_file,
+                        caption=caption,
+                        read_timeout=120,
+                        write_timeout=120,
+                        connect_timeout=20,
+                        pool_timeout=20,
+                    )
+                log.info("Image delivered after timeout retry to Telegram chat_id=%s", message.chat_id)
+            except Exception:
+                log.exception("Image was generated but Telegram delivery failed after retry")
                 try:
-                    photo_args = {
-                        "photo": None,
-                        "caption": random.choice(SUCCESS_LINES),
-                        "read_timeout": 120,
-                        "write_timeout": 120,
-                        "connect_timeout": 20,
-                        "pool_timeout": 20,
-                    }
-                    # If the original request was deleted or is no longer replyable,
-                    # retry as a normal photo message instead of losing the result.
-                    if attempt == 0:
-                        photo_args["reply_to_message_id"] = message.message_id
-                    with path.open("rb") as image_file:
-                        photo_args["photo"] = image_file
-                        await message.reply_photo(**photo_args)
-                    break
-                except BadRequest as exc:
-                    if attempt == 0 and "message to be replied not found" in str(exc).lower():
-                        log.warning("Original request message is unavailable; retrying photo without reply target")
-                        continue
-                    raise
-                except TimedOut:
-                    if attempt == 1:
-                        raise
-                    log.warning("Telegram image upload timed out; retrying once")
-                    await asyncio.sleep(1)
+                    await status.edit_text(random.choice(DELIVERY_ERROR_LINES))
+                except Exception:
+                    log.exception("Could not edit progress message; sending delivery error as a new message")
+                    await message.reply_text(random.choice(DELIVERY_ERROR_LINES))
+                return
         except Exception:
             log.exception("Image was generated but Telegram delivery failed")
             try:
