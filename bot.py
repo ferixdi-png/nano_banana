@@ -31,6 +31,7 @@ DOWNLOAD_TIMEOUT = 30
 logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
 log = logging.getLogger("flow-telegram-bot")
 browser_lock = Lock()
+generation_queue_lock = asyncio.Lock()
 
 
 
@@ -302,61 +303,70 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Send normally, not as a reply: the original message may have been deleted.
-    status = await context.bot.send_message(chat_id=chat.id, text="Принял промпт. Запускаю генерацию в Flow…")
+    queued = generation_queue_lock.locked()
+    status_text = (
+        "Предыдущая генерация ещё выполняется. Поставил запрос в очередь — "
+        "запущу, когда освободится браузер (примерно через минуту)."
+        if queued else "Принял промпт. Запускаю генерацию в Flow…"
+    )
+    status = await context.bot.send_message(chat_id=chat.id, text=status_text)
 
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        if attempt > 1:
-            try:
-                await status.edit_text(f"Повторная попытка {attempt}/{MAX_ATTEMPTS}…")
-            except Exception:
-                log.exception("Не удалось обновить статусное сообщение Telegram")
+    async with generation_queue_lock:
+        if queued:
+            log.info("Queued generation acquired browser slot.")
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            if attempt > 1:
                 try:
-                    status = await context.bot.send_message(
-                        chat_id=chat.id,
-                        text=f"Повторная попытка {attempt}/{MAX_ATTEMPTS}…",
-                    )
+                    await status.edit_text(f"Повторная попытка {attempt}/{MAX_ATTEMPTS}…")
                 except Exception:
-                    log.exception("Не удалось отправить статусное сообщение Telegram")
-
-        try:
-            path = await asyncio.to_thread(generate_and_download, prompt)
-            with path.open("rb") as photo:
-                await context.bot.send_photo(
-                    chat_id=chat.id,
-                    photo=photo,
-                    caption="Готово · Nano Banana 2.1",
-                )
-            try:
-                await status.delete()
-            except Exception:
-                log.exception("Не удалось удалить статусное сообщение Telegram")
-            return
-        except Exception as exc:
-            log.exception("Попытка %s завершилась ошибкой", attempt)
-            if attempt >= MAX_ATTEMPTS:
-                error_text = f"Не удалось получить изображение после {MAX_ATTEMPTS} попыток.\n\nПричина: {str(exc)[:700]}"
-                try:
-                    await status.edit_text(error_text)
-                except Exception:
-                    log.exception("Не удалось обновить итоговый статус Telegram")
+                    log.exception("Не удалось обновить статусное сообщение Telegram")
                     try:
-                        await context.bot.send_message(chat_id=chat.id, text=error_text)
+                        status = await context.bot.send_message(
+                            chat_id=chat.id,
+                            text=f"Повторная попытка {attempt}/{MAX_ATTEMPTS}…",
+                        )
                     except Exception:
-                        log.exception("Не удалось отправить итоговую ошибку Telegram")
-                return
-
+                        log.exception("Не удалось отправить статусное сообщение Telegram")
+    
             try:
-                await status.edit_text(f"Попытка {attempt} не удалась. Жду 10 секунд и повторяю…")
-            except Exception:
-                log.exception("Не удалось обновить статусное сообщение Telegram")
-                try:
-                    status = await context.bot.send_message(
+                path = await asyncio.to_thread(generate_and_download, prompt)
+                with path.open("rb") as photo:
+                    await context.bot.send_photo(
                         chat_id=chat.id,
-                        text=f"Попытка {attempt} не удалась. Повторяю через 10 секунд…",
+                        photo=photo,
+                        caption="Готово · Nano Banana 2.1",
                     )
+                try:
+                    await status.delete()
                 except Exception:
-                    log.exception("Не удалось отправить статусное сообщение Telegram")
-            await asyncio.sleep(10)
+                    log.exception("Не удалось удалить статусное сообщение Telegram")
+                return
+            except Exception as exc:
+                log.exception("Попытка %s завершилась ошибкой", attempt)
+                if attempt >= MAX_ATTEMPTS:
+                    error_text = f"Не удалось получить изображение после {MAX_ATTEMPTS} попыток.\n\nПричина: {str(exc)[:700]}"
+                    try:
+                        await status.edit_text(error_text)
+                    except Exception:
+                        log.exception("Не удалось обновить итоговый статус Telegram")
+                        try:
+                            await context.bot.send_message(chat_id=chat.id, text=error_text)
+                        except Exception:
+                            log.exception("Не удалось отправить итоговую ошибку Telegram")
+                    return
+    
+                try:
+                    await status.edit_text(f"Попытка {attempt} не удалась. Жду 10 секунд и повторяю…")
+                except Exception:
+                    log.exception("Не удалось обновить статусное сообщение Telegram")
+                    try:
+                        status = await context.bot.send_message(
+                            chat_id=chat.id,
+                            text=f"Попытка {attempt} не удалась. Повторяю через 10 секунд…",
+                        )
+                    except Exception:
+                        log.exception("Не удалось отправить статусное сообщение Telegram")
+                await asyncio.sleep(10)
 
 
 def main():
