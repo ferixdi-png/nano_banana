@@ -1,0 +1,22 @@
+services:
+  - type: worker
+    name: nano-banana-flow-bot
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    maxShutdownDelaySeconds: 300
+    disk:
+      name: flow-session
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ALLOWED_USER_ID
+        value: "6913446846"
+      - key: FLOW_PROJECT_URL
+        sync: false
+      - key: FLOW_STORAGE_STATE_B64
+        sync: false
