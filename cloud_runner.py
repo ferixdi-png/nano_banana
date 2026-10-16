@@ -1,6 +1,8 @@
 """Kie AI image generation runner for the Render Background Worker."""
 import json
+import base64
 import logging
+import mimetypes
 import os
 import re
 import time
@@ -14,6 +16,9 @@ import bot
 API_KEY = os.getenv("KIE_API_KEY", "").strip()
 API_BASE_URL = os.getenv("KIE_API_BASE_URL", "https://api.kie.ai").strip().rstrip("/")
 MODEL = "gpt-image-2-5-sunburst-text-to-image"
+IMAGE_EDIT_MODEL = "gpt-image-2-5-sunburst-image-to-image"
+IMAGE_UPLOAD_URL = "https://kieai.redpandaai.co/api/file-base64-upload"
+MAX_INPUT_IMAGE_BYTES = 10 * 1024 * 1024
 DEFAULT_ASPECT_RATIO = "9:16"
 ASPECT_RATIOS = ("27:16", "16:27", "21:9", "16:9", "9:16", "3:2", "2:3", "4:3", "3:4", "1:1", "9:8", "8:9")
 RESOLUTION = "1K"
@@ -148,18 +153,58 @@ def _task_data(response: dict) -> dict:
     return {}
 
 
-def _create_task(prompt: str) -> str:
-    aspect_ratio = _detect_aspect_ratio(prompt)
+def _upload_input_image(image_path: Path) -> str:
+    """Upload a Telegram image to Kie and return its temporary HTTPS URL."""
+    if not image_path.exists() or not image_path.is_file():
+        raise bot.GenerationError("Исходное фото не найдено на сервере.")
+    image_size = image_path.stat().st_size
+    if image_size <= 0:
+        raise bot.GenerationError("Исходное фото пустое.")
+    if image_size > MAX_INPUT_IMAGE_BYTES:
+        raise bot.GenerationError("Фото больше 10 МБ. Отправь изображение поменьше.")
+
+    mime_type = mimetypes.guess_type(image_path.name)[0] or "image/jpeg"
+    encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
     payload = {
-        "model": MODEL,
-        "input": {
+        "base64Data": f"data:{mime_type};base64,{encoded}",
+        "uploadPath": "images/base64",
+        "fileName": image_path.name,
+    }
+    response = _request_json(IMAGE_UPLOAD_URL, method="POST", payload=payload)
+    data = response.get("data") if isinstance(response.get("data"), dict) else {}
+    url = data.get("downloadUrl") or data.get("download_url") or data.get("url")
+    if not isinstance(url, str) or not url.startswith("https://"):
+        raise bot.GenerationError(
+            "Kie AI не вернул HTTPS-ссылку на загруженное фото. "
+            f"Ответ: {json.dumps(response, ensure_ascii=False)[:300]}"
+        )
+    log.info("Input image uploaded to Kie successfully (%s bytes)", image_size)
+    return url
+
+
+def _create_task(prompt: str, input_image_url: str | None = None) -> str:
+    if input_image_url:
+        model = IMAGE_EDIT_MODEL
+        input_data = {
+            "prompt": prompt,
+            "input_urls": [input_image_url],
+            "aspect_ratio": "auto",
+            "resolution": RESOLUTION,
+            "background": "auto",
+        }
+        log.info("Creating Kie image-to-image task; preserving source image ratio")
+    else:
+        model = MODEL
+        aspect_ratio = _detect_aspect_ratio(prompt)
+        input_data = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,
             "resolution": RESOLUTION,
             "background": BACKGROUND,
-        },
-    }
-    log.info("Using image aspect ratio: %s", aspect_ratio)
+        }
+        log.info("Using text-to-image aspect ratio: %s", aspect_ratio)
+
+    payload = {"model": model, "input": input_data}
     response = _request_json(
         f"{API_BASE_URL}/api/v1/jobs/createTask",
         method="POST",
@@ -309,7 +354,9 @@ def _download_result(url: str) -> Path:
     return destination
 
 
-def kie_generate_and_download(prompt: str) -> Path:
+def kie_generate_and_download(
+    prompt: str, input_image_path: Path | None = None
+) -> Path:
     if not API_KEY:
         raise bot.GenerationError(
             "В Render Environment ещё не задан KIE_API_KEY. "
@@ -318,7 +365,8 @@ def kie_generate_and_download(prompt: str) -> Path:
     if not prompt.strip():
         raise bot.GenerationError("Промпт пустой.")
 
-    task_id = _create_task(prompt.strip())
+    input_image_url = _upload_input_image(input_image_path) if input_image_path else None
+    task_id = _create_task(prompt.strip(), input_image_url=input_image_url)
     result_url = _wait_for_result(task_id)
     return _download_result(result_url)
 
