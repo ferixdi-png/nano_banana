@@ -461,16 +461,22 @@ def generate_and_download(prompt):
 
 
 def is_allowed(update: Update) -> bool:
-    """Allow generation only inside the configured creators group, for every member."""
+    """Allow all members in the creators group and the configured admin in private chat."""
     chat = update.effective_chat
     message = update.effective_message
-    return bool(
-        chat
-        and message
-        and chat.type in ("group", "supergroup")
-        and ALLOWED_CHAT_ID
-        and chat.id == ALLOWED_CHAT_ID
-    )
+    user = update.effective_user
+    if not chat or not message or not user:
+        return False
+
+    # Everyone in the configured creators group can generate.
+    if chat.type in ("group", "supergroup"):
+        return bool(ALLOWED_CHAT_ID and chat.id == ALLOWED_CHAT_ID)
+
+    # Only the configured admin can use private chat for testing.
+    if chat.type == "private":
+        return bool(ALLOWED_USER_ID and user.id == ALLOWED_USER_ID)
+
+    return False
 
 
 CREATORS_CHAT_MESSAGE = (
@@ -486,10 +492,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not message or not chat:
         return
     if is_allowed(update):
-        await message.reply_text(
-            "Я на связи. Генерировать могут все участники этого чата. "
-            "Напиши «сгенерируй изображение …» или /img и опиши результат."
-        )
+        if chat.type == "private":
+            await message.reply_text(
+                "Админский режим активен. Здесь можно тестировать генерацию; "
+                "для остальных пользователей бот работает только в чате креаторов. "
+                "Напиши «сгенерируй изображение …» или /img и опиши результат."
+            )
+        else:
+            await message.reply_text(
+                "Я на связи. Генерировать могут все участники этого чата. "
+                "Напиши «сгенерируй изображение …» или /img и опиши результат."
+            )
     elif chat.type == "private":
         await message.reply_text(CREATORS_CHAT_MESSAGE)
 
