@@ -474,7 +474,7 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if queued:
         status_text = (
             random.choice(GENERATION_ACKNOWLEDGEMENTS)
-            + "\\nОчередь занята, кожаный. Запущу, как только освободится браузер."
+            + "\nОчередь занята, кожаный. Запущу, как только освободится браузер."
         )
     else:
         status_text = random.choice(GENERATION_ACKNOWLEDGEMENTS)
