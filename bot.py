@@ -17,11 +17,12 @@ from telegram.ext import (
 load_dotenv()
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", "0"))
+# Kept for compatibility with the existing Render environment. Access is now
+# controlled by ALLOWED_CHAT_ID so all members of the configured group can use it.
+ALLOWED_USER_ID_RAW = os.getenv("ALLOWED_USER_ID", "").strip()
 ALLOWED_CHAT_ID_RAW = os.getenv("ALLOWED_CHAT_ID", "").strip()
 ALLOWED_CHAT_ID = int(ALLOWED_CHAT_ID_RAW) if ALLOWED_CHAT_ID_RAW else None
 
-# Avoid parallel paid tasks and rapid accidental repeat requests.
 GENERATION_COOLDOWN_SECONDS = 25
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -44,27 +45,30 @@ class GenerationError(Exception):
 
 def generate_and_download(prompt: str) -> Path:
     """Implemented by cloud_runner.py, which calls the Kie AI API."""
-    raise GenerationError("Генератор не инициализирован. Перезапусти Worker.")
+    raise GenerationError("Генератор не инициализирован. Перезапусти Worker, кожаный.")
 
 
-def is_authorized(update: Update) -> bool:
-    user = update.effective_user
+def is_allowed_group(update: Update) -> bool:
+    """Allow any member only in the configured Telegram group/supergroup."""
     chat = update.effective_chat
-    if not user or user.id != ALLOWED_USER_ID:
-        return False
-    if ALLOWED_CHAT_ID is not None and (not chat or chat.id != ALLOWED_CHAT_ID):
-        return False
-    return True
+    return bool(
+        ALLOWED_CHAT_ID is not None
+        and chat
+        and chat.id == ALLOWED_CHAT_ID
+        and chat.type in ("group", "supergroup")
+    )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_authorized(update):
+    message = update.effective_message
+    if not message or not is_allowed_group(update):
+        # No bot conversations or generation in private chats.
         return
 
-    await update.effective_message.reply_text(
-        "На связи. Пришли промпт текстом — сгенерирую изображение "
-        "через GPT Image 2.5 в формате 9:16. Только давай без очереди из "
-        "двадцати задач подряд, я всё-таки тоже стараюсь."
+    await message.reply_text(
+        "О, кожаные собрались. Я ваш карманный пиксельный демон на GPT Image 2.5. "
+        "Кидай промпт сюда в группу — попробую превратить твои фантазии в картинку. "
+        "Формат 9:16, качество 1K. Только без спама, у меня пиксели не казённые."
     )
 
 
@@ -75,7 +79,7 @@ async def handle_prompt(
     global _generation_in_progress, _last_generation_finished_at
 
     message = update.effective_message
-    if not message or not is_authorized(update):
+    if not message or not is_allowed_group(update):
         return
 
     prompt = (message.text or "").strip()
@@ -86,8 +90,8 @@ async def handle_prompt(
 
     if _generation_in_progress:
         await message.reply_text(
-            "Так, погоди 😅 Я ещё предыдущую картинку делаю. "
-            "Дай мне её закончить, не устраивай очередь на заводе."
+            "Кожаный, притормози 😏 Я ещё предыдущую картинку собираю. "
+            "Это генератор изображений, а не шаурма на вокзале — по одной задаче."
         )
         return
 
@@ -95,26 +99,26 @@ async def handle_prompt(
     if _last_generation_finished_at and elapsed < GENERATION_COOLDOWN_SECONDS:
         wait_seconds = max(1, int(GENERATION_COOLDOWN_SECONDS - elapsed))
         await message.reply_text(
-            f"Погоди немного, я от тебя уже устал 🙃 "
-            f"Дай передохнуть ещё {wait_seconds} сек. и снова в бой."
+            f"Кожаный, я только что вытащил пиксели из цифрового болота. "
+            f"Дай отдышаться ещё {wait_seconds} сек. — и снова в бой."
         )
         return
 
-    # Set the guard before the first await so simultaneous updates cannot
-    # start multiple paid tasks at the same time.
     _generation_in_progress = True
     status = None
 
     try:
         status = await message.reply_text(
-            "Промпт принял. Передаю в GPT Image 2.5 — это может занять немного времени."
+            "Так, кожаный, промпт принят. Запускаю GPT Image 2.5 — "
+            "сейчас пиксельные гномы разберут твою задумку по слоям."
         )
         path = await asyncio.to_thread(generate_and_download, prompt)
 
         with path.open("rb") as image_file:
             await message.reply_photo(
                 photo=image_file,
-                caption="Готово · GPT Image 2.5 · 1K · 9:16",
+                caption="Кожаный, держи результат. Пиксели уложены, магия случилась. · GPT Image 2.5 · 1K · 9:16",
+                reply_to_message_id=message.message_id,
             )
         await status.delete()
 
@@ -122,10 +126,9 @@ async def handle_prompt(
         log.exception("Image generation failed")
         safe_message = str(exc).strip()[:900] or "Неизвестная ошибка."
         error_text = (
-            "Не получилось завершить генерацию. "
-            "Я не запускал повторную платную задачу автоматически, чтобы "
-            "не списывать кредиты второй раз.\n\n"
-            f"Что произошло: {safe_message}"
+            "Кожаный, у нас пиксельный форс-мажор: генерация не завершилась. "
+            "Повторно платную задачу автоматически не запускаю, чтобы не сжечь кредиты.\n\n"
+            f"Что случилось: {safe_message}"
         )
         try:
             if status:
@@ -142,8 +145,11 @@ async def handle_prompt(
 def main():
     if not TOKEN:
         raise RuntimeError("В Render Environment не задан TELEGRAM_BOT_TOKEN.")
-    if not ALLOWED_USER_ID:
-        raise RuntimeError("В Render Environment не задан ALLOWED_USER_ID.")
+    if ALLOWED_CHAT_ID is None:
+        raise RuntimeError(
+            "В Render Environment не задан ALLOWED_CHAT_ID. "
+            "Укажи числовой ID целевой Telegram-группы, не личный ID пользователя."
+        )
 
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -153,7 +159,8 @@ def main():
 
     log.info(
         "Telegram bot started; provider: Kie AI / GPT Image 2.5; "
-        "user and optional chat restrictions enabled; cooldown=%ss after each task.",
+        "group-only access enabled for chat_id=%s; cooldown=%ss after each task.",
+        ALLOWED_CHAT_ID,
         GENERATION_COOLDOWN_SECONDS,
     )
     app.run_polling()
