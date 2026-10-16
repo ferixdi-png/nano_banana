@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Flow Diagnostics — Ferixdi",
+  "version": "1.0.0",
+  "description": "Показывает техническое состояние страницы Google Flow без изменения её проверок и ограничений.",
+  "host_permissions": [
+    "https://flow.google.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://flow.google.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Flow Diagnostics"
+  }
+}
