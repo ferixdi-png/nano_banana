@@ -252,12 +252,12 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     is_group = chat.type in ("group", "supergroup")
-    command_prompt = re.match(r"^/img(?:@\\w+)?\\s*(.*)$", prompt, flags=re.IGNORECASE | re.DOTALL)
+    command_prompt = re.match(r"^/img(?:@\w+)?\s*(.*)$", prompt, flags=re.IGNORECASE | re.DOTALL)
 
     if is_group:
         # In group chats, generate only when explicitly requested to avoid accidental generations.
         explicit_request = re.search(
-            r"\\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\\b",
+            r"\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\b",
             prompt,
             flags=re.IGNORECASE,
         )
@@ -265,7 +265,7 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             prompt = command_prompt.group(1).strip()
         elif explicit_request:
             prompt = re.sub(
-                r"^.*?\\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\\b[:,!\\s-]*",
+                r"^.*?\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\b[:,!\s-]*",
                 "",
                 prompt,
                 count=1,
@@ -314,7 +314,7 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as exc:
             log.exception("Попытка %s завершилась ошибкой", attempt)
             if attempt >= MAX_ATTEMPTS:
-                error_text = f"Не удалось получить изображение после {MAX_ATTEMPTS} попыток.\\n\\nПричина: {str(exc)[:700]}"
+                error_text = f"Не удалось получить изображение после {MAX_ATTEMPTS} попыток.\n\nПричина: {str(exc)[:700]}"
                 try:
                     await status.edit_text(error_text)
                 except Exception:
