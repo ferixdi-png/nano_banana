@@ -208,17 +208,30 @@ def create_new_project(context):
     )
     clicked = False
 
-    # Prefer a clearly labelled project-creation button.
+    # Flow's current UI exposes the action as button.new-project-button.
+    # Disable Playwright's implicit navigation wait: the click can succeed while
+    # Flow keeps the browser on an SPA transition for longer than the click timeout.
     try:
-        buttons = page.get_by_role("button", name=create_pattern)
-        for i in range(min(buttons.count(), 10)):
-            button = buttons.nth(i)
-            if button.is_visible() and button.is_enabled():
-                button.click(timeout=5000)
-                clicked = True
-                break
+        specific_button = page.locator("button.new-project-button")
+        if specific_button.count() and specific_button.first.is_visible() and specific_button.first.is_enabled():
+            clicked = True
+            specific_button.first.click(timeout=10000, no_wait_after=True)
     except Exception:
-        log.exception("Could not click a labelled Flow new-project button")
+        log.exception("Could not click Flow's new-project button")
+
+    # Fallback for UI variants where the CSS class changes. Set clicked before
+    # invoking click because Flow may process the click even if its transition stalls.
+    if not clicked:
+        try:
+            buttons = page.get_by_role("button", name=create_pattern)
+            for i in range(min(buttons.count(), 10)):
+                button = buttons.nth(i)
+                if button.is_visible() and button.is_enabled():
+                    clicked = True
+                    button.click(timeout=10000, no_wait_after=True)
+                    break
+        except Exception:
+            log.exception("Could not click a labelled Flow new-project button")
 
     # Some Flow layouts render the project tile as a non-button element.
     if not clicked:
@@ -226,9 +239,9 @@ def create_new_project(context):
             candidates = page.get_by_text(create_pattern)
             for i in range(min(candidates.count(), 12)):
                 item = candidates.nth(i)
-                if item.is_visible():
-                    item.click(timeout=5000)
+                if item.is_visible() and item.is_enabled():
                     clicked = True
+                    item.click(timeout=10000, no_wait_after=True)
                     break
         except Exception:
             log.exception("Could not click a labelled Flow new-project tile")
