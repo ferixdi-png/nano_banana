@@ -163,6 +163,135 @@ def prepare_storage_state():
             raise FlowError("FLOW_STORAGE_STATE_B64 is not valid base64-encoded Playwright storage state.") from exc
 
 
+
+def google_totp_code(secret):
+    """Generate a current TOTP code from the secret configured in Render."""
+    import hashlib
+    import hmac
+    import struct
+    import base64 as _base64
+
+    normalized = re.sub(r"[^A-Z2-7]", "", (secret or "").upper())
+    if not normalized:
+        raise FlowError("FLOW_GOOGLE_TOTP_SECRET задан, но не содержит корректный Base32-секрет.")
+    try:
+        key = _base64.b32decode(normalized + "=" * ((8 - len(normalized) % 8) % 8))
+    except Exception as exc:
+        raise FlowError("FLOW_GOOGLE_TOTP_SECRET не распознан как Base32-секрет.") from exc
+    counter = int(time.time() // 30)
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    number = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
+    return str(number % 1_000_000).zfill(6)
+
+
+def login_google_if_configured(context):
+    """Use Render-stored credentials for a normal Google sign-in; never bypass security challenges."""
+    email = os.getenv("FLOW_GOOGLE_EMAIL", "").strip()
+    password = os.getenv("FLOW_GOOGLE_PASSWORD", "")
+    totp_secret = os.getenv("FLOW_GOOGLE_TOTP_SECRET", "").strip()
+    if not (email and password and totp_secret):
+        raise FlowError(
+            "Не найдена сессия Google Flow. Для прямого входа добавь FLOW_GOOGLE_EMAIL, "
+            "FLOW_GOOGLE_PASSWORD и FLOW_GOOGLE_TOTP_SECRET в Render Environment."
+        )
+
+    page = context.pages[0] if context.pages else context.new_page()
+    target_match = re.search(r"/project/([^/?#]+)", FLOW_PROJECT_URL)
+    target_url = f"https://flow.google.com/project/{target_match.group(1)}" if target_match else "https://flow.google.com/"
+    page.goto(
+        "https://accounts.google.com/signin/v2/identifier"
+        "?service=accountsettings&continue=https%3A%2F%2Fflow.google.com%2F",
+        wait_until="domcontentloaded",
+        timeout=60000,
+    )
+    page.wait_for_timeout(1200)
+
+    try:
+        email_box = page.locator('input[type="email"], input[name="identifier"]').first
+        if email_box.is_visible(timeout=5000):
+            email_box.fill(email)
+            page.get_by_role("button", name=re.compile(r"Next|Далее", re.I)).click(timeout=10000)
+            page.wait_for_timeout(1200)
+    except Exception:
+        log.info("Google email step was not shown; continuing with current sign-in state.")
+
+    try:
+        password_box = page.locator('input[type="password"]').first
+        if password_box.is_visible(timeout=5000):
+            password_box.fill(password)
+            page.get_by_role("button", name=re.compile(r"Next|Далее", re.I)).click(timeout=10000)
+            page.wait_for_timeout(1500)
+    except Exception:
+        log.info("Google password step was not shown; continuing with current sign-in state.")
+
+    try:
+        body = page.locator("body").inner_text().lower()
+    except Exception:
+        body = ""
+    if any(term in body for term in (
+        "confirm it's you", "подтвердите, что это вы",
+        "suspicious activity", "подозрительная активность",
+        "captcha", "робот",
+    )):
+        raise FlowError(
+            "Google остановил автоматический вход дополнительной проверкой. "
+            "Автоматически обходить такую проверку нельзя; войди в аккаунт вручную и обнови сессию."
+        )
+
+    try:
+        code_box = page.locator(
+            'input[name="totpPin"], input[autocomplete="one-time-code"], '
+            'input[name="code"], input[type="tel"]'
+        ).first
+        if code_box.is_visible(timeout=4000):
+            code_box.fill(google_totp_code(totp_secret))
+            page.get_by_role("button", name=re.compile(r"Next|Далее|Verify|Подтвердить", re.I)).click(timeout=10000)
+            page.wait_for_timeout(1800)
+    except FlowError:
+        raise
+    except Exception:
+        log.info("Google authenticator-code step was not detected automatically.")
+
+    try:
+        body = page.locator("body").inner_text().lower()
+    except Exception:
+        body = ""
+    if any(term in body for term in (
+        "choose how you want to sign in", "выберите способ входа",
+        "2-step verification", "двухэтапная аутентификация",
+    )):
+        try:
+            option = page.get_by_text(re.compile(r"Authenticator|Аутентификатор|код подтверждения", re.I))
+            if option.count() and option.first.is_visible():
+                option.first.click(timeout=5000)
+                page.wait_for_timeout(1000)
+                code_box = page.locator(
+                    'input[name="totpPin"], input[autocomplete="one-time-code"], '
+                    'input[name="code"], input[type="tel"]'
+                ).first
+                code_box.wait_for(state="visible", timeout=5000)
+                code_box.fill(google_totp_code(totp_secret))
+                page.get_by_role("button", name=re.compile(r"Next|Далее|Verify|Подтвердить", re.I)).click(timeout=10000)
+                page.wait_for_timeout(1800)
+        except Exception:
+            log.info("Could not automatically select the authenticator option.")
+
+    page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(3500)
+    if target_match and "/project/" not in page.url:
+        try:
+            tail = page.locator("body").inner_text()[-1200:]
+        except Exception:
+            tail = ""
+        raise FlowError(
+            "Не удалось завершить вход в Google Flow: проект всё ещё не открылся. "
+            f"Текущий URL: {page.url}. Текст страницы: {tail}"
+        )
+    persist_session(context)
+    log.info("Google sign-in flow finished; browser session saved.")
+    return page
+
 def create_new_project(context):
     """Open Flow home and create a fresh project for this single image generation."""
     page = next(
@@ -626,10 +755,10 @@ def generate_and_download(prompt):
                     if STATE_PATH.exists():
                         context = browser.new_context(storage_state=str(STATE_PATH), accept_downloads=True)
                     else:
-                        raise FlowError(
-                            "Не найдена авторизованная сессия Google Flow. "
-                            "Нужно экспортировать сессию из локального Chrome и добавить FLOW_STORAGE_STATE_B64 в Render."
-                        )
+                        context = browser.new_context(accept_downloads=True)
+
+                # Sign in with credentials stored in Render Environment. No security challenge is bypassed.
+                login_google_if_configured(context)
 
                 # Reuse the explicitly configured Flow project when provided.
                 # Create a fresh project only when FLOW_PROJECT_URL is not configured.
