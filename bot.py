@@ -214,15 +214,22 @@ def login_google_if_configured(context):
             body = page.locator("body").inner_text().lower()
         except Exception:
             body = ""
+        # Only an explicit login requirement counts as an expired session.
+        # The public Flow /about page may contain generic sign-in links even when
+        # Google authentication has already succeeded; treating those as proof of
+        # logout can trigger an unnecessary second sign-in and destabilize the session.
         if any(marker in body for marker in (
-            "sign in to continue", "sign in with google", "войдите, чтобы продолжить",
-            "войти в аккаунт", "нужно войти в аккаунт",
+            "sign in to continue", "please sign in to continue", "you need to sign in",
+            "войдите, чтобы продолжить", "нужно войти в аккаунт",
+            "войдите в аккаунт, чтобы продолжить",
         )):
             return True
-        # A redirect to /about is the observed logged-out/pricing landing page.
-        # Attempt sign-in there, but do not require the configured project to survive
-        # afterward: project selection/creation has its own fallback below.
-        return "/about" in current
+        if "/about" in current:
+            log.warning(
+                "Flow redirected the configured project to public /about; "
+                "this alone is not treated as an authentication failure."
+            )
+        return False
 
     open_target()
     if not page_requires_login():
@@ -449,7 +456,7 @@ def create_new_project(context):
         "sign in to continue",
         "please sign in to continue",
         "you need to sign in",
-        "sign in with google",
+        
         "войдите, чтобы продолжить",
         "нужно войти в аккаунт",
         "войдите в аккаунт, чтобы продолжить",
@@ -1298,6 +1305,7 @@ def main():
     app.add_handler(CommandHandler("img", handle_prompt))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_prompt))
     app.add_error_handler(on_application_error)
+    log.info("BOT_BUILD=flow-auth-routing-fix-2026-10-16")
     log.info("Telegram-бот запускается.")
     external_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
     port = int(os.getenv("PORT", "10000"))
