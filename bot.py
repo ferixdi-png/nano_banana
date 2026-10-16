@@ -930,7 +930,8 @@ def generate_and_download(prompt):
                         error_text = str(project_error).lower()
                         security_markers = (
                             "подозрительной активности", "suspicious activity",
-                            "дополнительную проверку безопасности", "captcha",
+                            "дополнительную проверку безопасности",
+                            "captcha challenge", "verify you are human", "unusual traffic",
                             "остановлен; заверши проверку", "требует авторизацию",
                             "flow явно требует авторизацию", "google запросил дополнительную проверку",
                         )
