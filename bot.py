@@ -177,7 +177,8 @@ def create_new_project(context):
         # Flow may redirect directly to the last project; return to its home screen.
         page.goto("https://labs.google/fx/tools/flow", wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(2500)
-    body_text = ""    try:
+    body_text = ""
+    try:
         body_text = page.locator("body").inner_text()
     except Exception:
         pass
@@ -752,7 +753,8 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await message.reply_text(CREATORS_CHAT_MESSAGE)
         return
 
-    prompt = (message.text or "").strip()    if not prompt:
+    prompt = (message.text or "").strip()
+    if not prompt:
         return
 
     command_prompt = re.match(r"^/img(?:@\w+)?\s*(.*)$", prompt, flags=re.IGNORECASE | re.DOTALL)
@@ -1007,4 +1009,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
