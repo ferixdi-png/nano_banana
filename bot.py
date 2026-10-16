@@ -86,10 +86,34 @@ def get_project_page(context):
 
 
 def choose_setting(page, option):
-    page.get_by_role("button", name="Триггер настроек").click()
-    page.wait_for_timeout(250)
-    page.get_by_text(option, exact=True).click()
-    page.wait_for_timeout(350)
+    """Choose a Flow setting even if its menu label contains extra descriptive text."""
+    trigger = page.get_by_role("button", name="Триггер настроек")
+    trigger.click()
+    page.wait_for_timeout(500)
+
+    # Flow's labels can vary slightly between UI versions/locales.
+    exact = page.get_by_text(option, exact=True)
+    if exact.count():
+        exact.first.click(timeout=8000)
+        page.wait_for_timeout(400)
+        return
+
+    partial = page.get_by_text(re.compile(re.escape(option), re.IGNORECASE))
+    if partial.count():
+        partial.first.click(timeout=8000)
+        page.wait_for_timeout(400)
+        return
+
+    # Include a short DOM snapshot in the error so the next failure tells us
+    # which options Flow actually rendered instead of only timing out.
+    try:
+        menu_text = page.locator("body").inner_text()[-3500:]
+    except Exception:
+        menu_text = "(не удалось прочитать текст страницы)"
+    raise FlowError(
+        f"В меню настроек Flow не найден вариант «{option}». "
+        f"Текст страницы в конце меню: {menu_text}"
+    )
 
 
 def set_generation_settings(page):
@@ -263,7 +287,15 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if attempt >= MAX_ATTEMPTS:
                 await status.edit_text(f"Не удалось получить изображение после {MAX_ATTEMPTS} попыток.\n\nПричина: {str(exc)[:700]}")
                 return
-            await status.edit_text(f"Попытка {attempt} не удалась. Жду 10 секунд и повторяю…")
+            try:
+                await status.edit_text(f"Попытка {attempt} не удалась. Жду 10 секунд и повторяю…")
+            except Exception:
+                # The status message may have been deleted or become uneditable;
+                # don't let a Telegram message-edit error hide the real Flow error.
+                log.exception("Не удалось обновить статусное сообщение Telegram")
+                status = await message.reply_text(
+                    f"Попытка {attempt} не удалась. Повторяю через 10 секунд…"
+                )
             await asyncio.sleep(10)
 
 
