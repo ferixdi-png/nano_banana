@@ -9,9 +9,10 @@ This repository includes a Docker-based Render Background Worker. The worker nee
 - `TELEGRAM_BOT_TOKEN`: bot token from BotFather.
 - `ALLOWED_USER_ID`: Telegram numeric user ID.
 - `FLOW_PROJECT_URL`: URL of the Google Flow project to use.
-- `FLOW_STORAGE_STATE_B64`: base64-encoded Playwright storage-state JSON exported from the already logged-in local Chrome session.
+- `FLOW_STORAGE_STATE_B64`: optional base64-encoded Playwright storage-state JSON exported from a logged-in browser.
+- `FLOW_GOOGLE_EMAIL`, `FLOW_GOOGLE_PASSWORD`, `FLOW_GOOGLE_TOTP_SECRET`: optional Google sign-in credentials for request-time login when Flow rejects the saved session. Store them only in Render Environment, never in repository files.
 
-The Render service has a persistent disk mounted at `/var/data` to preserve the browser session state between restarts. The exported state contains Google authentication cookies and must be treated as a secret.
+The Render service has a persistent disk mounted at `/var/data` to preserve the browser session state between restarts. The bot checks the Flow project on every generation request and reuses an accepted session. If Flow redirects away from the project, it attempts a normal Google sign-in using the optional Render variables, then saves the refreshed browser session. Google security challenges or suspicious-activity checks are not bypassed; if Google requires one, the request stops with an actionable error. Any exported browser state contains Google authentication cookies and must be treated as a secret.
 
 ### Export the local session
 
