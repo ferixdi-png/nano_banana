@@ -13,7 +13,7 @@ import bot
 
 API_KEY = os.getenv("KIE_API_KEY", "").strip()
 API_BASE_URL = os.getenv("KIE_API_BASE_URL", "https://api.kie.ai").strip().rstrip("/")
-MODEL = "gpt-image-2-5-sunburst-image-to-image"
+MODEL = "gpt-image-2-5-sunburst-text-to-image"
 DEFAULT_ASPECT_RATIO = "9:16"
 ASPECT_RATIOS = ("27:16", "16:27", "21:9", "16:9", "9:16", "3:2", "2:3", "4:3", "3:4", "1:1", "9:8", "8:9")
 RESOLUTION = "1K"
