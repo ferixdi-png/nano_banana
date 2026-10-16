@@ -58,6 +58,9 @@ log = logging.getLogger("ferixdi-image-bot")
 
 _generation_in_progress = False
 _last_generation_finished_at = 0.0
+PENDING_IMAGE_TTL_SECONDS = 10 * 60
+# Allows a user to send the photo first and the editing instruction as a separate message.
+_pending_images: dict[tuple[int, int], tuple[Path, float]] = {}
 
 # Rotating copy keeps the bot lively without roasting the person who asked.
 START_ADMIN_LINES = [
@@ -228,10 +231,66 @@ async def handle_prompt(
         message.document
         and (message.document.mime_type or "").lower().startswith("image/")
     )
-    has_input_image = has_photo or image_document
+    has_attached_image = has_photo or image_document
+    user_id = update.effective_user.id if update.effective_user else 0
+    pending_key = (message.chat_id, user_id)
+    now = time.monotonic()
 
-    # The bot name is required. With an attached image, ordinary edit instructions
-    # such as "Ferixdi, add glasses" are valid without image-generation keywords.
+    # Remove stale pending uploads so old photos are never edited accidentally.
+    for key, (saved_path, saved_at) in list(_pending_images.items()):
+        if now - saved_at > PENDING_IMAGE_TTL_SECONDS:
+            _pending_images.pop(key, None)
+            try:
+                saved_path.unlink(missing_ok=True)
+            except Exception:
+                log.warning("Could not remove expired pending image: %s", saved_path, exc_info=True)
+
+    pending_image_path = None
+    if not has_attached_image and prompt and BOT_NAME_RE.search(prompt):
+        pending = _pending_images.pop(pending_key, None)
+        if pending:
+            saved_path, saved_at = pending
+            if now - saved_at <= PENDING_IMAGE_TTL_SECONDS and saved_path.exists():
+                pending_image_path = saved_path
+                log.info("Using separately uploaded pending image for chat_id=%s user_id=%s", message.chat_id, user_id)
+            else:
+                try:
+                    saved_path.unlink(missing_ok=True)
+                except Exception:
+                    log.warning("Could not remove stale pending image: %s", saved_path, exc_info=True)
+
+    has_input_image = has_attached_image or pending_image_path is not None
+
+    # Photo first, instruction second is supported too. Keep the photo for 10 minutes.
+    if has_attached_image and (not prompt or not BOT_NAME_RE.search(prompt)):
+        file_id = message.photo[-1].file_id if has_photo else message.document.file_id
+        telegram_file = await context.bot.get_file(file_id)
+        suffix = ".jpg"
+        if image_document and message.document.file_name:
+            candidate_suffix = Path(message.document.file_name).suffix.lower()
+            if candidate_suffix in {".jpg", ".jpeg", ".png", ".webp"}:
+                suffix = candidate_suffix
+        saved_path = OUTPUT_DIR / f"pending_{message.chat_id}_{user_id}_{message.message_id}{suffix}"
+        await telegram_file.download_to_drive(custom_path=str(saved_path))
+        if not saved_path.exists() or saved_path.stat().st_size == 0:
+            raise GenerationError("Не удалось сохранить исходное фото из Telegram.")
+        if saved_path.stat().st_size > 10 * 1024 * 1024:
+            saved_path.unlink(missing_ok=True)
+            await message.reply_text("Фото больше 10 МБ. Отправь изображение поменьше.")
+            return
+        previous = _pending_images.pop(pending_key, None)
+        if previous:
+            try:
+                previous[0].unlink(missing_ok=True)
+            except Exception:
+                log.warning("Could not remove replaced pending image: %s", previous[0], exc_info=True)
+        _pending_images[pending_key] = (saved_path, now)
+        await message.reply_text("Фото поймал. Теперь напиши: Ferixdi, добавь ей очки")
+        log.info("Pending image saved: chat_id=%s user_id=%s bytes=%s", message.chat_id, user_id, saved_path.stat().st_size)
+        return
+
+    # The bot name is required. With an attached or pending image, ordinary edit
+    # instructions such as "Ferixdi, add glasses" do not need generation keywords.
     if not prompt or not BOT_NAME_RE.search(prompt):
         return
     if not has_input_image and not (
@@ -259,10 +318,10 @@ async def handle_prompt(
 
     _generation_in_progress = True
     status = None
-    input_image_path = None
+    input_image_path = pending_image_path
 
     try:
-        if has_input_image:
+        if has_attached_image:
             file_id = message.photo[-1].file_id if has_photo else message.document.file_id
             telegram_file = await context.bot.get_file(file_id)
             suffix = ".jpg"
