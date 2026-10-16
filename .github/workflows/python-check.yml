@@ -15,4 +15,4 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compile Python files
-        run: python -m py_compile bot.py export_flow_session.py
+        run: python -m py_compile bot.py cloud_runner.py export_flow_session.py
