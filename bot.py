@@ -456,7 +456,6 @@ def create_new_project(context):
         "sign in to continue",
         "please sign in to continue",
         "you need to sign in",
-        
         "войдите, чтобы продолжить",
         "нужно войти в аккаунт",
         "войдите в аккаунт, чтобы продолжить",
