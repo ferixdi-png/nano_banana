@@ -9,7 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.request import HTTPXRequest
-from telegram.error import TimedOut
+from telegram.error import BadRequest, TimedOut
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -249,17 +249,27 @@ async def handle_prompt(
         try:
             for attempt in range(2):
                 try:
+                    photo_args = {
+                        "photo": None,
+                        "caption": random.choice(SUCCESS_LINES),
+                        "read_timeout": 120,
+                        "write_timeout": 120,
+                        "connect_timeout": 20,
+                        "pool_timeout": 20,
+                    }
+                    # If the original request was deleted or is no longer replyable,
+                    # retry as a normal photo message instead of losing the result.
+                    if attempt == 0:
+                        photo_args["reply_to_message_id"] = message.message_id
                     with path.open("rb") as image_file:
-                        await message.reply_photo(
-                            photo=image_file,
-                            caption=random.choice(SUCCESS_LINES),
-                            reply_to_message_id=message.message_id,
-                            read_timeout=120,
-                            write_timeout=120,
-                            connect_timeout=20,
-                            pool_timeout=20,
-                        )
+                        photo_args["photo"] = image_file
+                        await message.reply_photo(**photo_args)
                     break
+                except BadRequest as exc:
+                    if attempt == 0 and "message to be replied not found" in str(exc).lower():
+                        log.warning("Original request message is unavailable; retrying photo without reply target")
+                        continue
+                    raise
                 except TimedOut:
                     if attempt == 1:
                         raise
@@ -267,10 +277,17 @@ async def handle_prompt(
                     await asyncio.sleep(1)
         except Exception:
             log.exception("Image was generated but Telegram delivery failed")
-            await status.edit_text(random.choice(DELIVERY_ERROR_LINES))
+            try:
+                await status.edit_text(random.choice(DELIVERY_ERROR_LINES))
+            except Exception:
+                log.exception("Could not edit progress message; sending delivery error as a new message")
+                await message.reply_text(random.choice(DELIVERY_ERROR_LINES))
             return
 
-        await status.delete()
+        try:
+            await status.delete()
+        except Exception:
+            log.warning("Could not delete generation progress message", exc_info=True)
 
     except Exception:
         log.exception("Image generation failed")
@@ -281,7 +298,11 @@ async def handle_prompt(
             else:
                 await message.reply_text(error_text)
         except Exception:
-            log.exception("Could not send generation error to Telegram")
+            log.exception("Could not edit status message; sending generation error as a new message")
+            try:
+                await message.reply_text(error_text)
+            except Exception:
+                log.exception("Could not send generation error to Telegram")
     finally:
         _generation_in_progress = False
         _last_generation_finished_at = time.monotonic()
