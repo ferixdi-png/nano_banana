@@ -31,13 +31,11 @@ GENERATION_COOLDOWN_SECONDS = 25
 # A request must address the bot by name before any generation trigger is considered.
 BOT_NAME_RE = re.compile(r"(?<![\w])(?:ferixdi|фериксди)(?![\w])", re.IGNORECASE)
 # Only explicit image-creation requests trigger generation.
+# Conversational command wording is accepted; wrapper text is stripped before generation.
 IMAGE_INTENT_RE = re.compile(
-    r"\b(?:сгенерируй(?:-ка)?|сгенерировать|генерируй|генерировать|"
-    r"нарисуй|нарисовать|изобрази|изобразить|"
-    r"создай\s+(?:изображение|картинку|фото)|"
-    r"сделай\s+(?:фото|картинку|изображение)|"
-    r"сделать\s+(?:фото|картинку|изображение)|"
-    r"сгенерируй\s+(?:изображение|картинку|фото))\b",
+    r"\\b(?:сгенерируй(?:-ка)?|сгенерировать|генерируй|генерировать|"
+    r"нарисуй(?:-ка)?|нарисовать|изобрази|изобразить|"
+    r"создай|создать|сделай(?:-ка)?|сделать|запили)\\b",
     re.IGNORECASE,
 )
 # These keywords also indicate an image-generation prompt in the creators chat.
@@ -122,24 +120,36 @@ def generate_and_download(prompt: str) -> Path:
     raise GenerationError("Генератор не инициализирован. Перезапусти Worker, кожаный.")
 
 def clean_generation_prompt(message_text: str) -> str:
-    """Remove bot addressing and command wrappers before sending the prompt to the image model."""
+    """Keep the visual request and remove bot addressing plus conversational wrappers."""
     prompt = BOT_NAME_RE.sub(" ", message_text)
-    # Remove command phrasing only at the beginning; keep the user's actual visual description.
-    prompt = re.sub(
-        r"^\s*(?:[,.:;!—–-]+\s*)*"
-        r"(?:сгенерируй(?:-ка)?|сгенерировать|генерируй|генерировать|"
-        r"нарисуй|нарисовать|изобрази|изобразить|"
-        r"создай|сделай|сделать)\b\s*"
-        r"(?:(?:изображение|картинку|фото|картинку-фото)\b\s*)*"
-        r"[,.:;!—–-]*\s*",
-        "",
-        prompt,
-        count=1,
-        flags=re.IGNORECASE,
+    prompt = re.sub(r"\\s+", " ", prompt).strip()
+
+    # Remove an optional leading English prompt label.
+    prompt = re.sub(r"^prompt\\s*[:—–-]?\\s*", "", prompt, count=1, flags=re.IGNORECASE)
+
+    # Strip command words and polite/friendly filler from the start, iteratively.
+    command_re = re.compile(
+        r"^(?:сгенерируй(?:-ка)?|сгенерировать|генерируй|генерировать|"
+        r"нарисуй(?:-ка)?|нарисовать|изобрази|изобразить|"
+        r"создай|создать|сделай(?:-ка)?|сделать|запили)\\b"
+        r"[\\s,.:;!—–-]*",
+        re.IGNORECASE,
     )
-    # Strip a leading English prompt label if used as a command prefix.
-    prompt = re.sub(r"^\s*prompt\s*[:—–-]?\s*", "", prompt, count=1, flags=re.IGNORECASE)
-    return re.sub(r"\s+", " ", prompt).strip(" \t\r\n,.:;!—–-")
+    filler_re = re.compile(
+        r"^(?:(?:по[- ]братски|и\\s+мне|для\\s+меня|пожалуйста|плиз|"
+        r"братски|бро|брат|дружище|мне|можешь|можно|давай|ну|слушай|эй|ка|же)"
+        r"\\b[\\s,.:;!—–-]*)+",
+        re.IGNORECASE,
+    )
+
+    previous = None
+    while prompt and prompt != previous:
+        previous = prompt
+        prompt = command_re.sub("", prompt, count=1)
+        prompt = filler_re.sub("", prompt, count=1)
+        prompt = re.sub(r"^[,.:;!—–-]+\\s*", "", prompt)
+
+    return re.sub(r"\\s+", " ", prompt).strip(" \\t\\r\\n,.:;!—–-")
 
 
 def can_generate_here(update: Update) -> bool:
