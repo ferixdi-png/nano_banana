@@ -15,7 +15,7 @@ services:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: ALLOWED_USER_ID
-        value: "6913446846"
+        sync: false
       - key: FLOW_PROJECT_URL
         sync: false
       - key: FLOW_STORAGE_STATE_B64
