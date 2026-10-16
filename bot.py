@@ -1225,6 +1225,7 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "переменные для входа не настроены",
                         "google запросил дополнительную проверку безопасности",
                         "google остановил автоматический вход",
+                        "flow требует одноразовое подтверждение",
                     )):
                         log.warning("Flow project routing failed; skipping futile browser retries.")
                         if "flow требует одноразовое подтверждение" in error_lower:
