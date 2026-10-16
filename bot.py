@@ -117,12 +117,18 @@ def choose_setting(page, option):
 
 
 def set_generation_settings(page):
+    """First prove Flow can generate at all; do not block on fragile aspect/quantity menus."""
     trigger = page.get_by_role("button", name="Триггер настроек")
-    if "Nano Banana 2.1" not in trigger.inner_text():
-        raise FlowError("В Flow выбрана не Nano Banana 2.1. Выбери её в настройках и повтори.")
-    choose_setting(page, "Изображение")
-    choose_setting(page, "9:16")
-    choose_setting(page, "x1")
+    trigger_text = trigger.inner_text()
+    log.info("Flow settings trigger: %r", trigger_text)
+    if "Nano Banana 2.1" not in trigger_text:
+        raise FlowError(
+            "Не удалось подтвердить Nano Banana 2.1 в Flow. "
+            f"Текущие настройки: {trigger_text!r}"
+        )
+    # Deliberately keep the UI's current image mode, aspect ratio and quantity.
+    # The first goal is to test whether an actual generation can be started.
+    log.info("Flow model verified; keeping current settings for diagnostic generation.")
 
 
 def image_snapshots(page):
@@ -137,16 +143,25 @@ def image_snapshots(page):
 
 def wait_for_new_image(page, old_sources):
     deadline = time.monotonic() + GENERATION_TIMEOUT
+    last_body = ""
     while time.monotonic() < deadline:
         page.wait_for_timeout(1500)
         for image in image_snapshots(page):
             src = image.get("src", "")
             if src and src not in old_sources and image.get("width", 0) > 32 and image.get("height", 0) > 32:
+                log.info("Flow produced a new image (%sx%s).", image.get("width"), image.get("height"))
                 return src
-        body = page.locator("body").inner_text().lower()
-        if any(marker in body for marker in ("sign in", "войдите в аккаунт", "insufficient credits", "недостаточно кредитов")):
-            raise FlowError("Flow сообщает о проблеме с авторизацией или доступными кредитами.")
-    raise TimeoutError("Новое изображение не появилось за отведённое время.")
+        last_body = page.locator("body").inner_text()
+        body = last_body.lower()
+        if any(marker in body for marker in ("sign in", "войдите в аккаунт", "insufficient credits", "недостаточно кредитов", "out of credits", "закончились бонусы")):
+            raise FlowError(
+                "Flow сообщает о проблеме с авторизацией или доступными бонусами. "
+                f"Текст страницы: {last_body[-1800:]}"
+            )
+    raise TimeoutError(
+        "Flow не показал новое изображение за отведённое время после нажатия генерации. "
+        f"Текст страницы в конце ожидания: {last_body[-2200:]}"
+    )
 
 
 def persist_session(context):
@@ -186,7 +201,9 @@ def generate_and_download(prompt):
                 prompt_box = page.get_by_role("textbox", name="Что вы хотите создать?")
                 prompt_box.fill(prompt)
                 old_sources = {item.get("src") for item in image_snapshots(page) if item.get("src")}
+                log.info("Prompt filled. Clicking Flow generation button now.")
                 page.get_by_role("button", name="Начать генерацию").click()
+                log.info("Flow generation button clicked; waiting up to %s seconds for a new image.", GENERATION_TIMEOUT)
                 new_src = wait_for_new_image(page, old_sources)
 
                 image_index = page.locator('img[alt="Карточка с изображением пользователя"]').evaluate_all(
@@ -304,7 +321,7 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_photo(
                     chat_id=chat.id,
                     photo=photo,
-                    caption="Готово · Nano Banana 2.1 · 1K · 9:16",
+                    caption="Готово · Nano Banana 2.1",
                 )
             try:
                 await status.delete()
