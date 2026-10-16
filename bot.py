@@ -497,6 +497,32 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat.id, text="Опиши, какое изображение нужно создать.")
         return
 
+    # Apply per-user cooldown and cap accepted work before waiting for the browser.
+    global pending_generations
+    user_key = str(update.effective_user.id if update.effective_user else chat.id)
+    now = time.monotonic()
+    previous_request = last_user_request_at.get(user_key, 0.0)
+    if now - previous_request < USER_REQUEST_COOLDOWN_SECONDS:
+        previous_notice = last_busy_notice_at.get(user_key, 0.0)
+        if now - previous_notice >= 10:
+            last_busy_notice_at[user_key] = now
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text=random.choice(BUSY_RESPONSES) + "\\nНе закидывай меня повторами, кожаный. Дай предыдущему запросу закончиться."
+            )
+        return
+    if pending_generations >= MAX_PENDING_GENERATIONS:
+        previous_notice = last_busy_notice_at.get(user_key, 0.0)
+        if now - previous_notice >= 10:
+            last_busy_notice_at[user_key] = now
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text=random.choice(BUSY_RESPONSES) + "\\nОчередь переполнена. Попробуй немного позже."
+            )
+        return
+    last_user_request_at[user_key] = now
+    pending_generations += 1
+
     # Send normally, not as a reply: the original message may have been deleted.
     queued = generation_queue_lock.locked()
     if queued:
