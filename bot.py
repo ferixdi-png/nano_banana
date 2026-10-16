@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import time
 from pathlib import Path
 
@@ -24,6 +25,13 @@ ALLOWED_CHAT_ID_RAW = os.getenv("ALLOWED_CHAT_ID", "").strip()
 ALLOWED_CHAT_ID = int(ALLOWED_CHAT_ID_RAW) if ALLOWED_CHAT_ID_RAW else None
 
 GENERATION_COOLDOWN_SECONDS = 25
+# Only explicit image-creation requests trigger a paid generation.
+IMAGE_INTENT_RE = re.compile(
+    r"\b(?:сгенерируй|сгенерировать|сгенерируй-ка|нарисуй|нарисовать|"
+    r"создай\s+(?:изображение|картинку|фото)|сделай\s+(?:фото|картинку|изображение)|"
+    r"сделать\s+(?:фото|картинку|изображение)|изобрази|генерируй)\b",
+    re.IGNORECASE,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "output"
@@ -67,8 +75,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await message.reply_text(
         "О, кожаные собрались. Я ваш карманный пиксельный демон на GPT Image 2.5. "
-        "Кидай промпт сюда в группу — попробую превратить твои фантазии в картинку. "
-        "Формат 9:16, качество 1K. Только без спама, у меня пиксели не казённые."
+        "Чтобы запустить генерацию, напиши в группе «сгенерируй», «нарисуй», "
+        "«создай изображение» или «сделай фото» и добавь описание. "
+        "Каждая картинка — строго 1K, формат 9:16. Пиксели сами себя не нарисуют."
     )
 
 
@@ -83,7 +92,7 @@ async def handle_prompt(
         return
 
     prompt = (message.text or "").strip()
-    if not prompt:
+    if not prompt or not IMAGE_INTENT_RE.search(prompt):
         return
 
     now = time.monotonic()
@@ -109,7 +118,7 @@ async def handle_prompt(
 
     try:
         status = await message.reply_text(
-            "Так, кожаный, промпт принят. Запускаю GPT Image 2.5 — "
+            "Так, кожаный, промпт принят. Запускаю GPT Image 2.5 в разрешении 1K — "
             "сейчас пиксельные гномы разберут твою задумку по слоям."
         )
         path = await asyncio.to_thread(generate_and_download, prompt)
@@ -159,7 +168,8 @@ def main():
 
     log.info(
         "Telegram bot started; provider: Kie AI / GPT Image 2.5; "
-        "group-only access enabled for chat_id=%s; cooldown=%ss after each task.",
+        "group-only access enabled for chat_id=%s; cooldown=%ss after each task; "
+        "explicit image intent required; resolution=1K.",
         ALLOWED_CHAT_ID,
         GENERATION_COOLDOWN_SECONDS,
     )
