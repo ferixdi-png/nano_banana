@@ -295,11 +295,22 @@ def login_google_if_configured(context):
             "Автоматический вход остановлен; заверши проверку вручную в обычном браузере."
         )
 
+    # Google may hide the authenticator behind "Try another way".
+    if "try another way" in body or "другой способ" in body:
+        try:
+            alternate = page.get_by_text(re.compile(r"Try another way|Другой способ", re.I))
+            if alternate.count() and alternate.first.is_visible():
+                alternate.first.click(timeout=8000)
+                page.wait_for_timeout(1000)
+                body = page.locator("body").inner_text().lower()
+        except Exception:
+            log.info("Google alternate sign-in methods were not selectable automatically.")
+
     # Select the authenticator option if Google presents a second-factor chooser.
     if any(term in body for term in (
         "choose how you want to sign in", "выберите способ входа",
         "2-step verification", "двухэтапная аутентификация",
-        "try another way", "другой способ",
+        "authenticator", "аутентификатор", "authentication app",
     )):
         try:
             option = page.get_by_text(
@@ -1097,11 +1108,23 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "google остановил автоматический вход",
                     )):
                         log.warning("Flow project routing failed; skipping futile browser retries.")
-                        error_text = (
-                            "Не удалось открыть рабочий проект Google Flow. "
-                            "Я остановил повторы, чтобы не перезапускать тяжёлый браузер без смысла. "
-                            "Проверь FLOW_PROJECT_URL и доступ к этому проекту в Google-аккаунте."
-                        )
+                        if "дополнительную проверку безопасности" in error_lower or "остановил автоматический вход" in error_lower:
+                            error_text = (
+                                "Google остановил автоматический вход дополнительной проверкой. "
+                                "Открой этот аккаунт в обычном браузере и заверши проверку там. "
+                                "Я не буду повторно перезапускать браузер без необходимости."
+                            )
+                        elif "переменные для входа не настроены" in error_lower:
+                            error_text = (
+                                "Flow не принял сохранённую сессию, а параметры входа не настроены. "
+                                "Проверь FLOW_GOOGLE_EMAIL, FLOW_GOOGLE_PASSWORD и FLOW_GOOGLE_TOTP_SECRET в Render."
+                            )
+                        else:
+                            error_text = (
+                                "Не удалось открыть рабочий проект Google Flow. "
+                                "Я остановил повторы, чтобы не перезапускать тяжёлый браузер без смысла. "
+                                "Проверь FLOW_PROJECT_URL и доступ этого Google-аккаунта к проекту."
+                            )
                         try:
                             await status.edit_text(error_text)
                         except Exception:
