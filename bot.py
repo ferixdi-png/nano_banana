@@ -389,7 +389,8 @@ def login_google_if_configured(context):
     return page
 
 def create_new_project(context):
-    """Open Flow home on either supported origin and create a fresh project."""
+    """Open Flow home and explicitly create a fresh project if the configured project is unavailable."""
+    log.info("Starting fresh-project fallback; configured project will not be retried.")
     page = next(
         (p for p in context.pages if "flow.google.com" in p.url or ("labs.google" in p.url and "/fx/tools/flow" in p.url)),
         context.pages[0] if context.pages else context.new_page(),
@@ -922,20 +923,34 @@ def generate_and_download(prompt):
                     try:
                         page = get_project_page(context)
                         log.info("Using configured Flow project: %s", page.url)
-                    except FlowError as project_error:
+                    except Exception as project_error:
+                        # A stale project URL, redirect to /about, selector timeout, or
+                        # navigation error must not prevent generation. Only stop for
+                        # an explicit Google security challenge or login requirement.
                         error_text = str(project_error).lower()
-                        if any(marker in error_text for marker in (
+                        security_markers = (
                             "подозрительной активности", "suspicious activity",
                             "дополнительную проверку безопасности", "captcha",
                             "остановлен; заверши проверку", "требует авторизацию",
-                        )):
-                            raise
+                            "flow явно требует авторизацию", "google запросил дополнительную проверку",
+                        )
+                        if any(marker in error_text for marker in security_markers):
+                            log.error(
+                                "Flow project fallback stopped because Google requires a security/authentication check: %s",
+                                project_error,
+                            )
+                            raise FlowError(str(project_error)) from project_error
                         log.warning(
-                            "Configured Flow project is unavailable; falling back to a fresh project. Details: %s",
+                            "Configured Flow project could not be opened; attempting to create a NEW project. "
+                            "Reason: %s",
                             project_error,
                         )
+                        page = None
                 if page is None:
+                    # Always make one explicit fresh-project attempt when the configured
+                    # project is unavailable; do not waste the request retrying that URL.
                     page = create_new_project(context)
+                    log.info("Fresh Flow project ready; continuing image generation: %s", page.url)
                 set_generation_settings(page)
                 prompt_box = page.get_by_role("textbox", name="Что вы хотите создать?")
                 combined_prompt = MASTER_PROMPT.replace("[USER_PROMPT]", prompt)
