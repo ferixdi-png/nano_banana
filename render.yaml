@@ -1,30 +1,17 @@
 services:
-  - type: web
-    name: nano-banana-flow-bot
+  - type: worker
+    name: nano_banana
     runtime: docker
     plan: starter
-    region: frankfurt
+    region: ohio
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    maxShutdownDelaySeconds: 300
-    disk:
-      name: flow-session
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: ALLOWED_USER_ID
         sync: false
-      - key: ALLOWED_CHAT_ID
+      - key: KIE_API_KEY
         sync: false
-      - key: FLOW_PROJECT_URL
-        sync: false
-      - key: FLOW_STORAGE_STATE_B64
-        sync: false
-      - key: FLOW_GOOGLE_EMAIL
-        sync: false
-      - key: FLOW_GOOGLE_PASSWORD
-        sync: false
-      - key: FLOW_GOOGLE_TOTP_SECRET
-        sync: false
+      - key: KIE_API_BASE_URL
+        value: https://api.kie.ai
