@@ -217,7 +217,7 @@ def login_google_if_configured(context):
             return True
         # For the configured project, /about is the known redirect observed when
         # Flow refuses the project route; try a normal sign-in before reporting access failure.
-        return bool(target_match and "/project/" not in current)
+        return "/about" in current or bool(target_match and "/project/" not in current)
 
     open_target()
     if not page_requires_login():
@@ -605,7 +605,7 @@ def choose_setting(page, option):
     # The model chip itself opens Flow's generation-parameter panel.
     # Prefer clicking the visible Nano Banana label, rather than blindly
     # toggling the whole settings trigger (which can close an already-open panel).
-    model_label = page.get_by_text(re.compile(r"Nano Banana\\s*2\\.1", re.IGNORECASE))
+    model_label = page.get_by_text(re.compile(r"Nano Banana\s*2\.1", re.IGNORECASE))
     try:
         visible_model = next(
             (model_label.nth(i) for i in range(min(model_label.count(), 8))
@@ -1086,10 +1086,16 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
                 except Exception as exc:
                     log.exception("Попытка %s завершилась ошибкой", attempt)
-                    if (
-                        "не открыл проект по прямой ссылке" in str(exc).lower()
-                        or "не задан flow_project_url" in str(exc).lower()
-                    ):
+                    error_lower = str(exc).lower()
+                    if any(marker in error_lower for marker in (
+                        "не открыл проект по прямой ссылке",
+                        "не задан flow_project_url",
+                        "google sign-in не восстановил доступ",
+                        "google flow не принял сохранённую сессию",
+                        "переменные для входа не настроены",
+                        "google запросил дополнительную проверку безопасности",
+                        "google остановил автоматический вход",
+                    )):
                         log.warning("Flow project routing failed; skipping futile browser retries.")
                         error_text = (
                             "Не удалось открыть рабочий проект Google Flow. "
