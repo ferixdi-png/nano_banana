@@ -177,7 +177,6 @@ def create_new_project(context):
         # Flow may redirect directly to the last project; return to its home screen.
         page.goto("https://labs.google/fx/tools/flow", wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(2500)
-
     body_text = ""
     try:
         body_text = page.locator("body").inner_text()
@@ -287,38 +286,78 @@ def create_new_project(context):
 
 
 def get_project_page(context):
+    """Open the exact configured project on Flow's migrated canonical domain."""
     pages = context.pages
-    target_match = re.search(r"/project/([^/?]+)", FLOW_PROJECT_URL) if FLOW_PROJECT_URL else None
+    target_match = re.search(r"/project/([^/?#]+)", FLOW_PROJECT_URL) if FLOW_PROJECT_URL else None
 
-    # If FLOW_PROJECT_URL is configured, always use that exact project rather than
-    # whichever project happens to be open in a restored browser tab.
     if target_match:
         target_id = target_match.group(1)
-        page = next(
-            (p for p in pages if re.search(r"/project/([^/?]+)", p.url)
-             and re.search(r"/project/([^/?]+)", p.url).group(1) == target_id),
-            pages[0] if pages else context.new_page(),
-        )
-        current_match = re.search(r"/project/([^/?]+)", page.url)
-        if not current_match or current_match.group(1) != target_id:
-            page.goto(FLOW_PROJECT_URL, wait_until="domcontentloaded", timeout=60000)
     else:
-        page = next((p for p in pages if "/project/" in p.url), None)
-        if page is None:
-            page = pages[0] if pages else context.new_page()
-            page.goto("https://labs.google/fx/tools/flow", wait_until="domcontentloaded", timeout=60000)
+        # A restored tab may already point to a project. Reuse it, but normalize
+        # the URL to the current Flow origin instead of navigating through Labs.
+        existing = next((p for p in pages if re.search(r"/project/([^/?#]+)", p.url)), None)
+        if existing:
+            target_match = re.search(r"/project/([^/?#]+)", existing.url)
+            target_id = target_match.group(1) if target_match else ""
+        else:
+            raise FlowError(
+                "Не задан FLOW_PROJECT_URL с адресом существующего проекта. "
+                "Укажи полную ссылку на нужный проект в Render Environment."
+            )
 
-    page.wait_for_timeout(1200)
-    if "/project/" not in page.url:
+    canonical_url = f"https://flow.google.com/project/{target_id}"
+    page = next(
+        (p for p in pages if re.search(r"/project/([^/?#]+)", p.url)
+         and re.search(r"/project/([^/?#]+)", p.url).group(1) == target_id),
+        pages[0] if pages else context.new_page(),
+    )
+
+    # Old Labs URLs now redirect for migrated accounts. Navigate directly to the
+    # canonical project route to avoid being dumped on the marketing /about page.
+    if page.url.rstrip("/") != canonical_url:
+        log.info("Opening configured Flow project directly: %s", canonical_url)
+        page.goto(canonical_url, wait_until="domcontentloaded", timeout=60000)
+
+    page.wait_for_timeout(4500)
+    current_match = re.search(r"/project/([^/?#]+)", page.url)
+    if not current_match or current_match.group(1) != target_id:
+        try:
+            page_title = page.title()
+        except Exception:
+            page_title = "(title unavailable)"
+        try:
+            body_tail = page.locator("body").inner_text()[-900:]
+        except Exception:
+            body_tail = "(page text unavailable)"
         raise FlowError(
-            "Не открылась рабочая страница проекта Google Flow. "
-            "Проверь FLOW_PROJECT_URL и авторизованную сессию. "
-            "Текущий URL: " + page.url
+            "Google Flow не открыл проект по прямой ссылке и перенаправил браузер. "
+            f"Ожидался: {canonical_url}. Текущий URL: {page.url}. "
+            f"Заголовок: {page_title}. Текст страницы: {body_tail}"
         )
 
-    project_match = re.search(r"/project/([^/]+)", page.url)
-    if not project_match:
-        raise FlowError("Не удалось определить проект Flow.")
+    body_text = ""
+    try:
+        body_text = page.locator("body").inner_text()
+    except Exception:
+        pass
+    if any(marker in body_text.lower() for marker in (
+        "мы заметили подозрительную активность",
+        "suspicious activity",
+    )):
+        raise FlowError(
+            "Google Flow показал предупреждение о подозрительной активности. "
+            "Автоматические повторы остановлены; проверь доступ к Flow в обычном браузере."
+        )
+
+    # The migrated frontend can take several seconds to mount its composer.
+    try:
+        page.get_by_role("textbox", name=re.compile(r"Что вы хотите создать|Describe|prompt", re.I)).wait_for(
+            state="visible", timeout=15000
+        )
+    except Exception:
+        # Return the project page so the caller can report the actual missing UI
+        # instead of silently switching projects or opening the marketing page.
+        log.warning("Project URL loaded but the Flow prompt composer was not detected. URL=%s", page.url)
 
     if "/edit/" in page.url:
         back = page.get_by_role("button", name='Кнопка "Назад" для возврата к предыдущей странице')
@@ -329,8 +368,10 @@ def get_project_page(context):
             except Exception:
                 pass
     if "/edit/" in page.url:
-        page.goto(f"https://flow.google.com/project/{project_match.group(1)}", wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(1000)
+        page.goto(canonical_url, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(2500)
+
+    log.info("Using configured Flow project: %s", page.url)
     return page
 
 
@@ -358,7 +399,6 @@ def choose_setting(page, option):
                 except Exception:
                     continue
         return False
-
     # The model chip itself opens Flow's generation-parameter panel.
     # Prefer clicking the visible Nano Banana label, rather than blindly
     # toggling the whole settings trigger (which can close an already-open panel).
@@ -537,8 +577,7 @@ def log_container_memory():
             browser_processes,
             browser_rss_kb / 1024,
         )
-    except Exception:
-        log.exception("Could not collect process memory diagnostics")
+    except Exception:        log.exception("Could not collect process memory diagnostics")
 
 
 def memory_watchdog(stop_event):
@@ -717,8 +756,7 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await message.reply_text(CREATORS_CHAT_MESSAGE)
         return
 
-    prompt = (message.text or "").strip()
-    if not prompt:
+    prompt = (message.text or "").strip()    if not prompt:
         return
 
     command_prompt = re.match(r"^/img(?:@\w+)?\s*(.*)$", prompt, flags=re.IGNORECASE | re.DOTALL)
@@ -897,8 +935,7 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Report whether the Telegram process is responsive without claiming Flow is healthy."""
     message = update.effective_message
-    if message is None:
-        return
+    if message is None:        return
     session_ready = STATE_PATH.exists() or bool(CDP_URL)
     queue_state = "занят генерацией" if generation_queue_lock.locked() else "свободен"
     session_state = "сессия браузера настроена" if session_ready else "не найдена сессия Flow"
