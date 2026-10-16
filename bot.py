@@ -423,6 +423,26 @@ def create_new_project(context):
             last_navigation_error = str(exc)
             log.warning("Could not open Flow home at %s: %s", home_url, exc)
 
+    # A /about landing is not the Flow editor. On affected accounts Google
+    # requires a one-time human "Confirm it's you" step before project routes work.
+    # Do not waste time retrying routes that will only redirect back to marketing.
+    if "/about" in page.url.lower():
+        try:
+            about_tail = page.locator("body").inner_text()[-1800:]
+        except Exception:
+            about_tail = "(не удалось прочитать страницу Flow)"
+        log.error(
+            "Flow is still on the public /about landing after both entry points; "
+            "manual one-time account verification may be required."
+        )
+        raise FlowError(
+            "FLOW требует одноразовое подтверждение: вместо редактора открывается публичная страница /about. "
+            "Открой https://flow.google.com/ в обычном Chrome под тем же Google-аккаунтом, "
+            "нажми основную кнопку входа в Flow и заверши проверку «Confirm it's you», если она появится. "
+            "Дождись, пока откроется рабочая студия Flow, затем повтори запрос боту. "
+            "Автоматически обходить проверку Google нельзя. " + about_tail[-700:]
+        )
+
     page.wait_for_timeout(1000)
     current_url = page.url
     if "/project/" in current_url:
@@ -1207,7 +1227,15 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "google остановил автоматический вход",
                     )):
                         log.warning("Flow project routing failed; skipping futile browser retries.")
-                        if "дополнительную проверку безопасности" in error_lower or "остановил автоматический вход" in error_lower:
+                        if "flow требует одноразовое подтверждение" in error_lower:
+                            error_text = (
+                                "Google Flow пока не пускает бота в редактор и возвращает публичную страницу /about. "
+                                "Нужно один раз подтвердить аккаунт вручную: открой https://flow.google.com/ "
+                                "в обычном Chrome под тем же Google-аккаунтом, нажми основную кнопку Flow и заверши "
+                                "«Confirm it's you», если появится. Дождись открытия рабочей студии и повтори запрос. "
+                                "После этого бот снова попробует открыть проект и при необходимости создать новый."
+                            )
+                        elif "дополнительную проверку безопасности" in error_lower or "остановил автоматический вход" in error_lower:
                             error_text = (
                                 "Google остановил автоматический вход дополнительной проверкой. "
                                 "Открой этот аккаунт в обычном браузере и заверши проверку там. "
@@ -1320,7 +1348,7 @@ def main():
     app.add_handler(CommandHandler("img", handle_prompt))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_prompt))
     app.add_error_handler(on_application_error)
-    log.info("BOT_BUILD=flow-auth-routing-fix-2026-10-16")
+    log.info("BOT_BUILD=flow-about-verification-diagnostic-2026-10-16")
     log.info("Telegram-бот запускается.")
     external_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
     port = int(os.getenv("PORT", "10000"))
