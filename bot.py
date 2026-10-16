@@ -226,9 +226,10 @@ def login_google_if_configured(context):
             return True
         if "/about" in current:
             log.warning(
-                "Flow redirected the configured project to public /about; "
-                "this alone is not treated as an authentication failure."
+                "Flow project route ended on public /about; treating this as an unavailable "
+                "authenticated session and attempting configured Google sign-in."
             )
+            return True
         return False
 
     open_target()
@@ -237,6 +238,14 @@ def login_google_if_configured(context):
         return page
 
     if not (email and password and totp_secret):
+        if "/about" in page.url.lower():
+            raise FlowError(
+                "Flow перенаправляет запросы проекта на публичную страницу /about; "
+                "бот не считает её рабочей сессией. Автоматический повторный вход невозможен, "
+                "потому что не заданы все переменные FLOW_GOOGLE_EMAIL, FLOW_GOOGLE_PASSWORD "
+                "и FLOW_GOOGLE_TOTP_SECRET. Настрой их в Render либо обнови FLOW_STORAGE_STATE_B64 "
+                "с помощью export_flow_session.py после входа в Flow в обычном браузере."
+            )
         raise FlowError(
             "Google Flow не принял сохранённую сессию, а переменные для входа не настроены. "
             "Добавь FLOW_GOOGLE_EMAIL, FLOW_GOOGLE_PASSWORD и FLOW_GOOGLE_TOTP_SECRET в Render."
@@ -1349,7 +1358,7 @@ def main():
     app.add_handler(CommandHandler("img", handle_prompt))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_prompt))
     app.add_error_handler(on_application_error)
-    log.info("BOT_BUILD=flow-about-verification-diagnostic-2026-10-16")
+    log.info("BOT_BUILD=flow-about-auth-recovery-2026-10-16")
     log.info("Telegram-бот запускается.")
     external_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
     port = int(os.getenv("PORT", "10000"))
