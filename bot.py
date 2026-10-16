@@ -61,9 +61,7 @@ START_ADMIN_LINES = [
     "Для тебя, босс, отдельный вход. Пользуйся властью разумно: например, закажи кота в скафандре.",
 ]
 START_PRIVATE_LINES = [
-    "В личке я пока только красиво стою. За генерацией заходи в нашу группу — там мой художественный цех.",
-    "Кожаный, мой мольберт находится в группе. Здесь я могу поболтать, но пиксели на работу не выходят.",
-    "Тут у меня режим «поболтать у кофемашины». Для картинок загляни в группу — там начинается пиксельный цирк.",
+    "За генерацией заходи в чат креаторов: https://t.me/ai_neiro_chat",
 ]
 START_GROUP_LINES = [
     "Так, кожаные, открываем художественный цех. Я — ваш пиксельный демон, но с лимитом терпения и без берета.",
@@ -155,9 +153,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{random.choice(START_ADMIN_LINES)}\n\n{example}\n{settings}"
             )
         else:
-            await message.reply_text(
-                f"{random.choice(START_PRIVATE_LINES)}\n\n{example}\n{settings}"
-            )
+            await message.reply_text(random.choice(START_PRIVATE_LINES))
         return
 
     if not can_generate_here(update):
