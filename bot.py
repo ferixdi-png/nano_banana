@@ -274,6 +274,7 @@ def main():
         raise RuntimeError("Задай ALLOWED_USER_ID и/или ALLOWED_CHAT_ID.")
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("img", handle_prompt))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_prompt))
     log.info("Telegram-бот запускается.")
     external_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
