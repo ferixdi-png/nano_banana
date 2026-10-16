@@ -20,6 +20,7 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", "0"))
 ALLOWED_CHAT_ID = int(os.getenv("ALLOWED_CHAT_ID", "0"))
 CDP_URL = os.getenv("CDP_URL", "http://127.0.0.1:9222" if os.name == "nt" else "").strip()  # Local Windows default; leave unset on Render
+BROWSER_CHANNEL = os.getenv("FLOW_BROWSER_CHANNEL", "chrome").strip().lower()  # Use branded Google Chrome on Render; set to chromium to roll back.
 FLOW_PROJECT_URL = os.getenv("FLOW_PROJECT_URL", "").strip()
 PROFILE_DIR = Path(os.getenv("FLOW_PROFILE_DIR", "/var/data/flow-profile"))
 STATE_PATH = Path(os.getenv("FLOW_STORAGE_STATE_PATH", "/var/data/flow-storage-state.json"))
@@ -497,7 +498,12 @@ def generate_and_download(prompt):
                         raise FlowError("В подключённом Chrome нет браузерного контекста.")
                     context = browser.contexts[0]
                 else:
-                    browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+                    launch_options = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage"]}
+                    if BROWSER_CHANNEL == "chrome":
+                        browser = p.chromium.launch(channel="chrome", **launch_options)
+                    else:
+                        browser = p.chromium.launch(**launch_options)
+                    log.info("Launching Playwright browser channel: %s", BROWSER_CHANNEL)
                     close_browser = True
                     if STATE_PATH.exists():
                         context = browser.new_context(storage_state=str(STATE_PATH), accept_downloads=True)
