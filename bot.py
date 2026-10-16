@@ -123,7 +123,7 @@ class GenerationError(Exception):
     """A user-safe generation error."""
 
 
-def generate_and_download(prompt: str) -> Path:
+def generate_and_download(prompt: str, input_image_path: Path | None = None) -> Path:
     """Implemented by cloud_runner.py, which calls the Kie AI API."""
     raise GenerationError("Генератор не инициализирован. Перезапусти Worker, кожаный.")
 
@@ -222,11 +222,21 @@ async def handle_prompt(
     if not message or not can_generate_here(update):
         return
 
-    prompt = (message.text or "").strip()
-    # Strict gate: without the bot's name, the message must never start generation.
+    prompt = (message.text or message.caption or "").strip()
+    has_photo = bool(message.photo)
+    image_document = bool(
+        message.document
+        and (message.document.mime_type or "").lower().startswith("image/")
+    )
+    has_input_image = has_photo or image_document
+
+    # The bot name is required. With an attached image, ordinary edit instructions
+    # such as "Ferixdi, add glasses" are valid without image-generation keywords.
     if not prompt or not BOT_NAME_RE.search(prompt):
         return
-    if not (IMAGE_INTENT_RE.search(prompt) or KEYWORD_TRIGGER_RE.search(prompt)):
+    if not has_input_image and not (
+        IMAGE_INTENT_RE.search(prompt) or KEYWORD_TRIGGER_RE.search(prompt)
+    ):
         return
 
     now = time.monotonic()
@@ -249,10 +259,31 @@ async def handle_prompt(
 
     _generation_in_progress = True
     status = None
+    input_image_path = None
 
     try:
+        if has_input_image:
+            file_id = message.photo[-1].file_id if has_photo else message.document.file_id
+            telegram_file = await context.bot.get_file(file_id)
+            input_image_path = OUTPUT_DIR / f"input_{message.chat_id}_{message.message_id}.img"
+            await telegram_file.download_to_drive(custom_path=str(input_image_path))
+            if not input_image_path.exists() or input_image_path.stat().st_size == 0:
+                raise GenerationError("Не удалось скачать исходное фото из Telegram.")
+            if input_image_path.stat().st_size > 10 * 1024 * 1024:
+                raise GenerationError("Фото больше 10 МБ. Отправь изображение поменьше.")
+            log.info(
+                "Input image received: chat_id=%s message_id=%s bytes=%s type=%s",
+                message.chat_id, message.message_id, input_image_path.stat().st_size,
+                "photo" if has_photo else "image_document"
+            )
+
         status = await message.reply_text(random.choice(PROGRESS_LINES))
-        path = await asyncio.to_thread(generate_and_download, cleaned_prompt)
+        if input_image_path is not None:
+            path = await asyncio.to_thread(
+                generate_and_download, cleaned_prompt, input_image_path
+            )
+        else:
+            path = await asyncio.to_thread(generate_and_download, cleaned_prompt)
 
         # Send directly to the chat, not as a reply to the source message.
         # Retry photo upload, then fall back to a document so Telegram constraints
@@ -358,6 +389,11 @@ async def handle_prompt(
             except Exception:
                 log.exception("Could not send generation error to Telegram")
     finally:
+        if input_image_path is not None:
+            try:
+                input_image_path.unlink(missing_ok=True)
+            except Exception:
+                log.warning("Could not remove temporary input image: %s", input_image_path, exc_info=True)
         _generation_in_progress = False
         _last_generation_finished_at = time.monotonic()
 
@@ -395,7 +431,10 @@ def main():
     )
     app.add_handler(CommandHandler("start", start))
     app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_prompt)
+        MessageHandler(
+            (filters.TEXT & ~filters.COMMAND) | filters.PHOTO | filters.Document.IMAGE,
+            handle_prompt,
+        )
     )
 
     log.info(
