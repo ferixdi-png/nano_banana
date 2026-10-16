@@ -6,7 +6,8 @@ import os
 import re
 import time
 from pathlib import Path
-from threading import Lock
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Lock, Thread
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -30,6 +31,33 @@ DOWNLOAD_TIMEOUT = 30
 logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
 log = logging.getLogger("flow-telegram-bot")
 browser_lock = Lock()
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path not in ("/", "/health", "/healthz"):
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"Not found")
+            return
+        body = b"nano_banana is running"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return
+
+
+def start_health_server():
+    port = int(os.getenv("PORT", "10000"))
+    server = ThreadingHTTPServer(("0.0.0.0", port), HealthHandler)
+    thread = Thread(target=server.serve_forever, daemon=True, name="render-health-server")
+    thread.start()
+    log.info("HTTP health server listening on 0.0.0.0:%s", port)
+    return server
 
 
 class FlowError(Exception):
@@ -235,11 +263,16 @@ def main():
         raise RuntimeError("Не задан TELEGRAM_BOT_TOKEN.")
     if not ALLOWED_USER_ID:
         raise RuntimeError("Не задан ALLOWED_USER_ID.")
+    health_server = start_health_server() if os.getenv("PORT") else None
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_prompt))
     log.info("Telegram-бот запускается.")
-    app.run_polling()
+    try:
+        app.run_polling()
+    finally:
+        if health_server is not None:
+            health_server.shutdown()
 
 
 if __name__ == "__main__":
