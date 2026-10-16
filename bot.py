@@ -293,10 +293,8 @@ async def handle_prompt(
     # instructions such as "Ferixdi, add glasses" do not need generation keywords.
     if not prompt or not BOT_NAME_RE.search(prompt):
         return
-    if not has_input_image and not (
-        IMAGE_INTENT_RE.search(prompt) or KEYWORD_TRIGGER_RE.search(prompt)
-    ):
-        return
+    # The user's rule: addressing Ferixdi is sufficient to start generation.
+    # Text-only requests use text-to-image; requests with an image use image-to-image.
 
     now = time.monotonic()
 
