@@ -7,7 +7,7 @@ import random
 import re
 import time
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock, Thread
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -484,6 +484,55 @@ def persist_session(context):
         log.exception("Не удалось сохранить состояние браузерной сессии")
 
 
+def log_container_memory():
+    """Best-effort RSS snapshot for diagnosing Render restarts/OOM kills."""
+    self_rss_kb = 0
+    total_rss_kb = 0
+    browser_rss_kb = 0
+    browser_processes = 0
+    try:
+        with open("/proc/self/status", "r", encoding="utf-8") as status_file:
+            for line in status_file:
+                if line.startswith("VmRSS:"):
+                    self_rss_kb = int(line.split()[1])
+                    break
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                base = f"/proc/{entry}"
+                with open(f"{base}/status", "r", encoding="utf-8") as status_file:
+                    status = status_file.read()
+                rss_line = next((line for line in status.splitlines() if line.startswith("VmRSS:")), None)
+                if not rss_line:
+                    continue
+                rss_kb = int(rss_line.split()[1])
+                total_rss_kb += rss_kb
+                with open(f"{base}/cmdline", "rb") as cmd_file:
+                    command = cmd_file.read().replace(b"\\x00", b" ").lower()
+                if b"chrome" in command or b"chromium" in command:
+                    browser_rss_kb += rss_kb
+                    browser_processes += 1
+            except (OSError, ValueError, StopIteration):
+                continue
+        log.info(
+            "Memory snapshot: self_rss_mb=%.1f container_process_rss_sum_mb=%.1f "
+            "browser_processes=%s browser_rss_sum_mb=%.1f",
+            self_rss_kb / 1024,
+            total_rss_kb / 1024,
+            browser_processes,
+            browser_rss_kb / 1024,
+        )
+    except Exception:
+        log.exception("Could not collect process memory diagnostics")
+
+
+def memory_watchdog(stop_event):
+    """Emit periodic memory diagnostics while the browser is running."""
+    while not stop_event.wait(8):
+        log_container_memory()
+
+
 def generate_and_download(prompt):
     with browser_lock:
         prepare_storage_state()
@@ -491,14 +540,31 @@ def generate_and_download(prompt):
             browser = None
             context = None
             close_browser = False
+            memory_stop = Event()
+            memory_thread = Thread(target=memory_watchdog, args=(memory_stop,), daemon=True)
             try:
+                memory_thread.start()
+                log_container_memory()
                 if CDP_URL:
                     browser = p.chromium.connect_over_cdp(CDP_URL)
                     if not browser.contexts:
                         raise FlowError("В подключённом Chrome нет браузерного контекста.")
                     context = browser.contexts[0]
                 else:
-                    launch_options = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage"]}
+                    launch_options = {
+                        "headless": True,
+                        "args": [
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-gpu",
+                            "--disable-extensions",
+                            "--disable-background-networking",
+                            "--disable-default-apps",
+                            "--no-first-run",
+                            "--no-default-browser-check",
+                            "--disable-sync",
+                        ],
+                    }
                     if BROWSER_CHANNEL == "chrome":
                         browser = p.chromium.launch(channel="chrome", **launch_options)
                     else:
@@ -556,6 +622,9 @@ def generate_and_download(prompt):
                 log.info("Изображение сохранено: %s", destination)
                 return destination
             finally:
+                memory_stop.set()
+                memory_thread.join(timeout=1)
+                log_container_memory()
                 if context is not None and not CDP_URL:
                     persist_session(context)
                     context.close()
