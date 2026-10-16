@@ -383,6 +383,13 @@ def login_google_if_configured(context):
         )
 
     open_target()
+    if "/about" in page.url.lower():
+        raise FlowError(
+            "Google sign-in did not restore access to the Flow editor: the project URL still redirects "
+            "to /about. The account may need a manual Google security check, Flow access may be unavailable "
+            "for this account, or the saved session may be stale. Complete any Google verification in a "
+            "normal browser, open Flow until the editor itself loads, then refresh the exported session."
+        )
     if target_match and not re.search(r"/project/([^/?#]+)", page.url):
         # Authentication may have succeeded even if this particular project route
         # is stale or unavailable. Save the session and let generate_and_download()
