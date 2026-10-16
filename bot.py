@@ -28,6 +28,8 @@ ALLOWED_CHAT_ID_RAW = os.getenv("ALLOWED_CHAT_ID", "").strip()
 ALLOWED_CHAT_ID = int(ALLOWED_CHAT_ID_RAW) if ALLOWED_CHAT_ID_RAW else None
 
 GENERATION_COOLDOWN_SECONDS = 25
+# A request must address the bot by name before any generation trigger is considered.
+BOT_NAME_RE = re.compile(r"(?<![\w])(?:ferixdi|фериксди)(?![\w])", re.IGNORECASE)
 # Only explicit image-creation requests trigger generation.
 IMAGE_INTENT_RE = re.compile(
     r"\b(?:сгенерируй(?:-ка)?|сгенерировать|генерируй|генерировать|"
@@ -148,7 +150,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
     example = (
-        "Пример: «Сгенерируй изображение: лысый енот в дорогом костюме "
+        "Пример: «Ferixdi, сгенерируй изображение: лысый енот в дорогом костюме "
         "на заседании совета директоров»."
     )
     settings = "Формат — 9:16, разрешение — 1K."
@@ -166,8 +168,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await message.reply_text(
         f"{random.choice(START_GROUP_LINES)}\n\n"
-        "Команды: «сгенерируй изображение ...», «нарисуй ...», "
-        "«создай фото ...» или «сделай фото ...».\n"
+        "Обязательно обращайся ко мне по имени: «Ferixdi, сгенерируй изображение ...», "
+        "«Фериксди, нарисуй ...» или «Ferixdi, prompt realistic face style ...».\n"
         f"{example}\n{settings}"
     )
 
@@ -183,9 +185,10 @@ async def handle_prompt(
         return
 
     prompt = (message.text or "").strip()
-    if not prompt or not (
-        IMAGE_INTENT_RE.search(prompt) or KEYWORD_TRIGGER_RE.search(prompt)
-    ):
+    # Strict gate: without the bot's name, the message must never start generation.
+    if not prompt or not BOT_NAME_RE.search(prompt):
+        return
+    if not (IMAGE_INTENT_RE.search(prompt) or KEYWORD_TRIGGER_RE.search(prompt)):
         return
 
     now = time.monotonic()
@@ -289,7 +292,7 @@ def main():
     log.info(
         "Telegram bot started; provider: Kie AI / GPT Image 2.5; "
         "group access enabled for chat_id=%s; admin private access for user_id=%s; "
-        "cooldown=%ss after each task; explicit image intent required.",
+        "cooldown=%ss; bot name required for every generation.",
         ALLOWED_CHAT_ID,
         ALLOWED_USER_ID,
         GENERATION_COOLDOWN_SECONDS,
