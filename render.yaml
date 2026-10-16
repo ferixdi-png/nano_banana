@@ -18,13 +18,7 @@ services:
         sync: false
       - key: ALLOWED_CHAT_ID
         sync: false
-      - key: FLOW_PROJECT_URL
+      - key: KIE_API_KEY
         sync: false
-      - key: FLOW_STORAGE_STATE_B64
-        sync: false
-      - key: FLOW_GOOGLE_EMAIL
-        sync: false
-      - key: FLOW_GOOGLE_PASSWORD
-        sync: false
-      - key: FLOW_GOOGLE_TOTP_SECRET
-        sync: false
+      - key: KIE_API_BASE_URL
+        value: https://api.kie.ai
