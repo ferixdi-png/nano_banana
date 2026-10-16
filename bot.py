@@ -575,7 +575,8 @@ def log_container_memory():
             browser_processes,
             browser_rss_kb / 1024,
         )
-    except Exception:        log.exception("Could not collect process memory diagnostics")
+    except Exception:
+        log.exception("Could not collect process memory diagnostics")
 
 
 def memory_watchdog(stop_event):
@@ -715,7 +716,8 @@ CREATORS_CHAT_MESSAGE = (
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     chat = update.effective_chat
-    if not message or not chat:        return
+    if not message or not chat:
+        return
     if is_allowed(update):
         if chat.type == "private":
             await message.reply_text(
@@ -914,7 +916,8 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             await status.edit_text(error_text)
                         except Exception:
                             log.exception("Не удалось показать пользователю отказ Flow")
-                            try:                                await context.bot.send_message(chat_id=chat.id, text=error_text)
+                            try:
+                                await context.bot.send_message(chat_id=chat.id, text=error_text)
                             except Exception:
                                 log.exception("Не удалось отправить сообщение об отказе Flow")
                         return
@@ -951,7 +954,8 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Report whether the Telegram process is responsive without claiming Flow is healthy."""
     message = update.effective_message
-    if message is None:        return
+    if message is None:
+        return
     session_ready = STATE_PATH.exists() or bool(CDP_URL)
     queue_state = "занят генерацией" if generation_queue_lock.locked() else "свободен"
     session_state = "сессия браузера настроена" if session_ready else "не найдена сессия Flow"
@@ -1009,5 +1013,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
