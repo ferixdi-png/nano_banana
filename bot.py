@@ -177,8 +177,7 @@ def create_new_project(context):
         # Flow may redirect directly to the last project; return to its home screen.
         page.goto("https://labs.google/fx/tools/flow", wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(2500)
-    body_text = ""
-    try:
+    body_text = ""    try:
         body_text = page.locator("body").inner_text()
     except Exception:
         pass
@@ -358,7 +357,6 @@ def get_project_page(context):
         # Return the project page so the caller can report the actual missing UI
         # instead of silently switching projects or opening the marketing page.
         log.warning("Project URL loaded but the Flow prompt composer was not detected. URL=%s", page.url)
-
     if "/edit/" in page.url:
         back = page.get_by_role("button", name='Кнопка "Назад" для возврата к предыдущей странице')
         if back.count():
@@ -536,7 +534,6 @@ def persist_session(context):
         context.storage_state(path=str(STATE_PATH))
     except Exception:
         log.exception("Не удалось сохранить состояние браузерной сессии")
-
 
 def log_container_memory():
     """Best-effort RSS snapshot for diagnosing Render restarts/OOM kills."""
@@ -717,8 +714,7 @@ CREATORS_CHAT_MESSAGE = (
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     chat = update.effective_chat
-    if not message or not chat:
-        return
+    if not message or not chat:        return
     if is_allowed(update):
         if chat.type == "private":
             await message.reply_text(
@@ -882,6 +878,25 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
                 except Exception as exc:
                     log.exception("Попытка %s завершилась ошибкой", attempt)
+                    if (
+                        "не открыл проект по прямой ссылке" in str(exc).lower()
+                        or "не задан flow_project_url" in str(exc).lower()
+                    ):
+                        log.warning("Flow project routing failed; skipping futile browser retries.")
+                        error_text = (
+                            "Не удалось открыть рабочий проект Google Flow. "
+                            "Я остановил повторы, чтобы не перезапускать тяжёлый браузер без смысла. "
+                            "Проверь FLOW_PROJECT_URL и доступ к этому проекту в Google-аккаунте."
+                        )
+                        try:
+                            await status.edit_text(error_text)
+                        except Exception:
+                            log.exception("Не удалось показать ошибку маршрута Flow")
+                            try:
+                                await context.bot.send_message(chat_id=chat.id, text=error_text)
+                            except Exception:
+                                log.exception("Не удалось отправить сообщение об ошибке маршрута Flow")
+                        return
                     if "подозрительную активность" in str(exc).lower() or "suspicious activity" in str(exc).lower():
                         log.warning(
                             "Flow rejected generation with suspicious-activity warning; "
@@ -897,8 +912,7 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             await status.edit_text(error_text)
                         except Exception:
                             log.exception("Не удалось показать пользователю отказ Flow")
-                            try:
-                                await context.bot.send_message(chat_id=chat.id, text=error_text)
+                            try:                                await context.bot.send_message(chat_id=chat.id, text=error_text)
                             except Exception:
                                 log.exception("Не удалось отправить сообщение об отказе Flow")
                         return
