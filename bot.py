@@ -288,18 +288,32 @@ def create_new_project(context):
 
 def get_project_page(context):
     pages = context.pages
-    page = next((p for p in pages if "/project/" in p.url), None)
+    target_match = re.search(r"/project/([^/?]+)", FLOW_PROJECT_URL) if FLOW_PROJECT_URL else None
 
-    if page is None:
-        page = pages[0] if pages else context.new_page()
-        target = FLOW_PROJECT_URL or "https://flow.google.com/"
-        page.goto(target, wait_until="domcontentloaded", timeout=60000)
+    # If FLOW_PROJECT_URL is configured, always use that exact project rather than
+    # whichever project happens to be open in a restored browser tab.
+    if target_match:
+        target_id = target_match.group(1)
+        page = next(
+            (p for p in pages if re.search(r"/project/([^/?]+)", p.url)
+             and re.search(r"/project/([^/?]+)", p.url).group(1) == target_id),
+            pages[0] if pages else context.new_page(),
+        )
+        current_match = re.search(r"/project/([^/?]+)", page.url)
+        if not current_match or current_match.group(1) != target_id:
+            page.goto(FLOW_PROJECT_URL, wait_until="domcontentloaded", timeout=60000)
+    else:
+        page = next((p for p in pages if "/project/" in p.url), None)
+        if page is None:
+            page = pages[0] if pages else context.new_page()
+            page.goto("https://labs.google/fx/tools/flow", wait_until="domcontentloaded", timeout=60000)
 
     page.wait_for_timeout(1200)
     if "/project/" not in page.url:
         raise FlowError(
-            "Не найдена страница проекта Google Flow. Проверь FLOW_PROJECT_URL "
-            "и авторизацию. Если Google просит войти, обнови сессию и экспортируй её заново."
+            "Не открылась рабочая страница проекта Google Flow. "
+            "Проверь FLOW_PROJECT_URL и авторизованную сессию. "
+            "Текущий URL: " + page.url
         )
 
     project_match = re.search(r"/project/([^/]+)", page.url)
@@ -579,9 +593,13 @@ def generate_and_download(prompt):
                             "Нужно экспортировать сессию из локального Chrome и добавить FLOW_STORAGE_STATE_B64 в Render."
                         )
 
-                # Create a separate Flow project for every individual image generation.
-                # This keeps project history isolated but does not bypass account-level restrictions.
-                page = create_new_project(context)
+                # Reuse the explicitly configured Flow project when provided.
+                # Create a fresh project only when FLOW_PROJECT_URL is not configured.
+                if FLOW_PROJECT_URL:
+                    page = get_project_page(context)
+                    log.info("Using configured Flow project: %s", page.url)
+                else:
+                    page = create_new_project(context)
                 set_generation_settings(page)
                 prompt_box = page.get_by_role("textbox", name="Что вы хотите создать?")
                 combined_prompt = MASTER_PROMPT.replace("[USER_PROMPT]", prompt)
