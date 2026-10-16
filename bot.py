@@ -215,9 +215,10 @@ def login_google_if_configured(context):
             "войти в аккаунт", "нужно войти в аккаунт",
         )):
             return True
-        # For the configured project, /about is the known redirect observed when
-        # Flow refuses the project route; try a normal sign-in before reporting access failure.
-        return "/about" in current or bool(target_match and "/project/" not in current)
+        # A redirect to /about or the Flow marketing/pricing page is not proof that
+        # the Google session is logged out. Project routing is handled separately:
+        # the caller will fall back to the Flow home page and create/open another project.
+        return False
 
     open_target()
     if not page_requires_login():
@@ -379,19 +380,51 @@ def login_google_if_configured(context):
     return page
 
 def create_new_project(context):
-    """Open Flow home and create a fresh project for this single image generation."""
+    """Open Flow home on either supported origin and create a fresh project."""
     page = next(
-        (p for p in context.pages if ("labs.google" in p.url and "/fx/tools/flow" in p.url) or "flow.google.com" in p.url),
+        (p for p in context.pages if "flow.google.com" in p.url or ("labs.google" in p.url and "/fx/tools/flow" in p.url)),
         context.pages[0] if context.pages else context.new_page(),
     )
-    page.goto("https://labs.google/fx/tools/flow", wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(2500)
 
+    # Flow is migrating from Labs to flow.google.com. Try the canonical origin
+    # first, then the legacy entry point; Google may redirect either one.
+    last_navigation_error = None
+    for home_url in ("https://flow.google.com/", "https://labs.google/fx/tools/flow"):
+        try:
+            page.goto(home_url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(2500)
+            current_url = page.url.lower()
+            body_probe = ""
+            try:
+                body_probe = page.locator("body").inner_text().lower()
+            except Exception:
+                pass
+            if "/project/" not in current_url and (
+                "new-project-button" in (page.locator("button").evaluate_all("(els) => els.map(e => e.className).join(' ')") or "")
+                or re.search(r"(new project|create project|создать проект|новый проект)", body_probe, re.I)
+            ):
+                break
+            # Keep trying the other entry point if this is only the public pricing page.
+            if "/about" in current_url or "explore google ai subscriptions" in body_probe:
+                last_navigation_error = f"Flow redirected to public page: {page.url}"
+                continue
+            break
+        except Exception as exc:
+            last_navigation_error = str(exc)
+            log.warning("Could not open Flow home at %s: %s", home_url, exc)
+
+    page.wait_for_timeout(1000)
     current_url = page.url
     if "/project/" in current_url:
         # Flow may redirect directly to the last project; return to its home screen.
-        page.goto("https://labs.google/fx/tools/flow", wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(2500)
+        for home_url in ("https://flow.google.com/", "https://labs.google/fx/tools/flow"):
+            try:
+                page.goto(home_url, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(2500)
+                if "/project/" not in page.url:
+                    break
+            except Exception as exc:
+                last_navigation_error = str(exc)
     body_text = ""
     try:
         body_text = page.locator("body").inner_text()
@@ -846,12 +879,26 @@ def generate_and_download(prompt):
                 # Sign in with credentials stored in Render Environment. No security challenge is bypassed.
                 login_google_if_configured(context)
 
-                # Reuse the explicitly configured Flow project when provided.
-                # Create a fresh project only when FLOW_PROJECT_URL is not configured.
+                # Prefer the configured project, but never let a stale/unavailable project
+                # block generation. Fall back to a fresh project on Flow home.
+                page = None
                 if FLOW_PROJECT_URL:
-                    page = get_project_page(context)
-                    log.info("Using configured Flow project: %s", page.url)
-                else:
+                    try:
+                        page = get_project_page(context)
+                        log.info("Using configured Flow project: %s", page.url)
+                    except FlowError as project_error:
+                        error_text = str(project_error).lower()
+                        if any(marker in error_text for marker in (
+                            "подозрительной активности", "suspicious activity",
+                            "дополнительную проверку безопасности", "captcha",
+                            "остановлен; заверши проверку", "требует авторизацию",
+                        )):
+                            raise
+                        log.warning(
+                            "Configured Flow project is unavailable; falling back to a fresh project. Details: %s",
+                            project_error,
+                        )
+                if page is None:
                     page = create_new_project(context)
                 set_generation_settings(page)
                 prompt_box = page.get_by_role("textbox", name="Что вы хотите создать?")
