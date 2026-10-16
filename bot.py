@@ -215,10 +215,10 @@ def login_google_if_configured(context):
             "войти в аккаунт", "нужно войти в аккаунт",
         )):
             return True
-        # A redirect to /about or the Flow marketing/pricing page is not proof that
-        # the Google session is logged out. Project routing is handled separately:
-        # the caller will fall back to the Flow home page and create/open another project.
-        return False
+        # A redirect to /about is the observed logged-out/pricing landing page.
+        # Attempt sign-in there, but do not require the configured project to survive
+        # afterward: project selection/creation has its own fallback below.
+        return "/about" in current
 
     open_target()
     if not page_requires_login():
@@ -364,15 +364,13 @@ def login_google_if_configured(context):
 
     open_target()
     if target_match and not re.search(r"/project/([^/?#]+)", page.url):
-        try:
-            page_title = page.title()
-            body_tail = page.locator("body").inner_text()[-1000:]
-        except Exception:
-            page_title, body_tail = "(не удалось прочитать страницу)", ""
-        raise FlowError(
-            "Google sign-in не восстановил доступ к проекту Flow. "
-            f"Текущий URL: {page.url}. Заголовок: {page_title}. "
-            f"Текст страницы: {body_tail}"
+        # Authentication may have succeeded even if this particular project route
+        # is stale or unavailable. Save the session and let generate_and_download()
+        # open any available project or create a fresh one.
+        log.warning(
+            "Google sign-in completed but configured project did not open (%s); "
+            "continuing to project fallback.",
+            page.url,
         )
 
     persist_session(context)
