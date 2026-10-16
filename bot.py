@@ -243,17 +243,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
-    if not is_allowed(update) or not message:
+    chat = update.effective_chat
+    if not is_allowed(update) or not message or not chat:
         return
+
     prompt = (message.text or "").strip()
     if not prompt:
         return
-    is_group = update.effective_chat.type in ("group", "supergroup")
+
+    is_group = chat.type in ("group", "supergroup")
+    command_prompt = re.match(r"^/img(?:@\\w+)?\\s*(.*)$", prompt, flags=re.IGNORECASE | re.DOTALL)
+
     if is_group:
-        # In group chats, generate only when explicitly requested to avoid turning every message into a paid generation.
-        command_prompt = re.match(r"^/img(?:@\w+)?\s*(.*)$", prompt, flags=re.IGNORECASE | re.DOTALL)
+        # In group chats, generate only when explicitly requested to avoid accidental generations.
         explicit_request = re.search(
-            r"\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\b",
+            r"\\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\\b",
             prompt,
             flags=re.IGNORECASE,
         )
@@ -261,7 +265,7 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             prompt = command_prompt.group(1).strip()
         elif explicit_request:
             prompt = re.sub(
-                r"^.*?\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\b[:,!\s-]*",
+                r"^.*?\\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\\b[:,!\\s-]*",
                 "",
                 prompt,
                 count=1,
@@ -269,33 +273,69 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ).strip()
         else:
             return
-        if not prompt:
-            await message.reply_text("Опиши, какое изображение нужно создать.")
-            return
-    status = await message.reply_text("Принял промпт. Запускаю генерацию в Flow…")
+    elif command_prompt:
+        # CommandHandler passes the original message text, so remove /img in private chats too.
+        prompt = command_prompt.group(1).strip()
+
+    if not prompt:
+        await context.bot.send_message(chat_id=chat.id, text="Опиши, какое изображение нужно создать.")
+        return
+
+    # Send normally, not as a reply: the original message may have been deleted.
+    status = await context.bot.send_message(chat_id=chat.id, text="Принял промпт. Запускаю генерацию в Flow…")
+
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        try:
-            if attempt > 1:
+        if attempt > 1:
+            try:
                 await status.edit_text(f"Повторная попытка {attempt}/{MAX_ATTEMPTS}…")
+            except Exception:
+                log.exception("Не удалось обновить статусное сообщение Telegram")
+                try:
+                    status = await context.bot.send_message(
+                        chat_id=chat.id,
+                        text=f"Повторная попытка {attempt}/{MAX_ATTEMPTS}…",
+                    )
+                except Exception:
+                    log.exception("Не удалось отправить статусное сообщение Telegram")
+
+        try:
             path = await asyncio.to_thread(generate_and_download, prompt)
             with path.open("rb") as photo:
-                await message.reply_photo(photo=photo, caption="Готово · Nano Banana 2.1 · 1K · 9:16")
-            await status.delete()
+                await context.bot.send_photo(
+                    chat_id=chat.id,
+                    photo=photo,
+                    caption="Готово · Nano Banana 2.1 · 1K · 9:16",
+                )
+            try:
+                await status.delete()
+            except Exception:
+                log.exception("Не удалось удалить статусное сообщение Telegram")
             return
         except Exception as exc:
             log.exception("Попытка %s завершилась ошибкой", attempt)
             if attempt >= MAX_ATTEMPTS:
-                await status.edit_text(f"Не удалось получить изображение после {MAX_ATTEMPTS} попыток.\n\nПричина: {str(exc)[:700]}")
+                error_text = f"Не удалось получить изображение после {MAX_ATTEMPTS} попыток.\\n\\nПричина: {str(exc)[:700]}"
+                try:
+                    await status.edit_text(error_text)
+                except Exception:
+                    log.exception("Не удалось обновить итоговый статус Telegram")
+                    try:
+                        await context.bot.send_message(chat_id=chat.id, text=error_text)
+                    except Exception:
+                        log.exception("Не удалось отправить итоговую ошибку Telegram")
                 return
+
             try:
                 await status.edit_text(f"Попытка {attempt} не удалась. Жду 10 секунд и повторяю…")
             except Exception:
-                # The status message may have been deleted or become uneditable;
-                # don't let a Telegram message-edit error hide the real Flow error.
                 log.exception("Не удалось обновить статусное сообщение Telegram")
-                status = await message.reply_text(
-                    f"Попытка {attempt} не удалась. Повторяю через 10 секунд…"
-                )
+                try:
+                    status = await context.bot.send_message(
+                        chat_id=chat.id,
+                        text=f"Попытка {attempt} не удалась. Повторяю через 10 секунд…",
+                    )
+                except Exception:
+                    log.exception("Не удалось отправить статусное сообщение Telegram")
             await asyncio.sleep(10)
 
 
