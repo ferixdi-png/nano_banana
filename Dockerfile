@@ -18,5 +18,6 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && python -m playwright install chromium chrome
 
 COPY bot.py export_flow_session.py ./
+RUN python -m py_compile bot.py export_flow_session.py
 
 CMD ["python", "bot.py"]
