@@ -488,9 +488,9 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if chat.type == "private" and (
             prompt_text.lower().startswith("/img")
             or re.search(
-                r"\\b(сгенерируй\\w*|сгенерировать|сгенерить|сгенери|сген|"
-                r"нарисуй\\w*|нарисовать|создай\\w*|создать|изобрази\\w*|"
-                r"сфотографируй|сфоткай|изображени\\w*|картинк\\w*|фото\\w*)\\b",
+                r"\b(сгенерируй\w*|сгенерировать|сгенерить|сгенери|сген|"
+                r"нарисуй\w*|нарисовать|создай\w*|создать|изобрази\w*|"
+                r"сфотографируй|сфоткай|изображени\w*|картинк\w*|фото\w*)\b",
                 prompt_text,
                 flags=re.IGNORECASE,
             )
