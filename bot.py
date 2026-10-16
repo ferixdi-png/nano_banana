@@ -153,11 +153,14 @@ def wait_for_new_image(page, old_sources):
                 return src
         last_body = page.locator("body").inner_text()
         body = last_body.lower()
-        if any(marker in body for marker in ("sign in", "войдите в аккаунт", "insufficient credits", "недостаточно кредитов", "out of credits", "закончились бонусы")):
+        # Informational Google Flow bonus banners do not block zero-credit Nano Banana generations.
+        if any(marker in body for marker in ("sign in", "войдите в аккаунт", "нужно войти в аккаунт")):
             raise FlowError(
-                "Flow сообщает о проблеме с авторизацией или доступными бонусами. "
+                "Flow требует авторизацию. "
                 f"Текст страницы: {last_body[-1800:]}"
             )
+        if int(time.monotonic()) % 10 < 2:
+            log.info("Flow generation still pending; URL=%s; page_tail=%r", page.url, last_body[-900:])
     raise TimeoutError(
         "Flow не показал новое изображение за отведённое время после нажатия генерации. "
         f"Текст страницы в конце ожидания: {last_body[-2200:]}"
