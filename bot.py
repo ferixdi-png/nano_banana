@@ -214,10 +214,8 @@ def login_google_if_configured(context):
             body = page.locator("body").inner_text().lower()
         except Exception:
             body = ""
-        # Only an explicit login requirement counts as an expired session.
-        # The public Flow /about page may contain generic sign-in links even when
-        # Google authentication has already succeeded; treating those as proof of
-        # logout can trigger an unnecessary second sign-in and destabilize the session.
+        # An explicit login requirement or a redirect to the public /about landing
+        # means the browser has no usable Flow editor session. Do not call it accepted.
         if any(marker in body for marker in (
             "sign in to continue", "please sign in to continue", "you need to sign in",
             "войдите, чтобы продолжить", "нужно войти в аккаунт",
@@ -238,17 +236,24 @@ def login_google_if_configured(context):
         return page
 
     if not (email and password and totp_secret):
+        missing = [
+            name for name, value in (
+                ("FLOW_GOOGLE_EMAIL", email),
+                ("FLOW_GOOGLE_PASSWORD", password),
+                ("FLOW_GOOGLE_TOTP_SECRET", totp_secret),
+            ) if not value
+        ]
+        log.error("Google sign-in recovery unavailable; missing environment variables: %s", ", ".join(missing))
         if "/about" in page.url.lower():
             raise FlowError(
-                "Flow перенаправляет запросы проекта на публичную страницу /about; "
-                "бот не считает её рабочей сессией. Автоматический повторный вход невозможен, "
-                "потому что не заданы все переменные FLOW_GOOGLE_EMAIL, FLOW_GOOGLE_PASSWORD "
-                "и FLOW_GOOGLE_TOTP_SECRET. Настрой их в Render либо обнови FLOW_STORAGE_STATE_B64 "
-                "с помощью export_flow_session.py после входа в Flow в обычном браузере."
+                "Flow перенаправляет запросы проекта на публичную страницу /about, рабочая сессия не подтверждена. "
+                "Для автоматического входа в Render не хватает переменных: " + ", ".join(missing) + ". "
+                "Добавь их в Environment. Если не хочешь хранить данные входа в сервисе, открой Flow вручную "
+                "в обычном Chrome и обнови FLOW_STORAGE_STATE_B64 через export_flow_session.py."
             )
         raise FlowError(
-            "Google Flow не принял сохранённую сессию, а переменные для входа не настроены. "
-            "Добавь FLOW_GOOGLE_EMAIL, FLOW_GOOGLE_PASSWORD и FLOW_GOOGLE_TOTP_SECRET в Render."
+            "Google Flow не принял сохранённую сессию. Не хватает переменных входа: "
+            + ", ".join(missing) + "."
         )
 
     log.info("Flow session is not accepted; starting Google sign-in.")
