@@ -121,6 +121,26 @@ def generate_and_download(prompt: str) -> Path:
     """Implemented by cloud_runner.py, which calls the Kie AI API."""
     raise GenerationError("Генератор не инициализирован. Перезапусти Worker, кожаный.")
 
+def clean_generation_prompt(message_text: str) -> str:
+    """Remove bot addressing and command wrappers before sending the prompt to the image model."""
+    prompt = BOT_NAME_RE.sub(" ", message_text)
+    # Remove command phrasing only at the beginning; keep the user's actual visual description.
+    prompt = re.sub(
+        r"^\\s*(?:[,.:;!—–-]+\\s*)*"
+        r"(?:сгенерируй(?:-ка)?|сгенерировать|генерируй|генерировать|"
+        r"нарисуй|нарисовать|изобрази|изобразить|"
+        r"создай|сделай|сделать)\\b\\s*"
+        r"(?:(?:изображение|картинку|фото|картинку-фото)\\b\\s*)*"
+        r"[,.:;!—–-]*\\s*",
+        "",
+        prompt,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    # Strip a leading English prompt label if used as a command prefix.
+    prompt = re.sub(r"^\\s*prompt\\s*[:—–-]?\\s*", "", prompt, count=1, flags=re.IGNORECASE)
+    return re.sub(r"\\s+", " ", prompt).strip(" \\t\\r\\n,.:;!—–-")
+
 
 def can_generate_here(update: Update) -> bool:
     """Everyone can generate in the configured group; admin can also use private chat."""
@@ -205,12 +225,16 @@ async def handle_prompt(
         )
         return
 
+    cleaned_prompt = clean_generation_prompt(prompt)
+    if not cleaned_prompt:
+        return
+
     _generation_in_progress = True
     status = None
 
     try:
         status = await message.reply_text(random.choice(PROGRESS_LINES))
-        path = await asyncio.to_thread(generate_and_download, prompt)
+        path = await asyncio.to_thread(generate_and_download, cleaned_prompt)
 
         try:
             for attempt in range(2):
