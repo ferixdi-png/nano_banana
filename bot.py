@@ -443,28 +443,59 @@ def generate_and_download(prompt):
 
 
 def is_allowed(update: Update) -> bool:
-    """Allow the configured Telegram group, plus the configured owner in private chat."""
-    message = update.effective_message
-    user = update.effective_user
+    """Allow generation only inside the configured creators group, for every member."""
     chat = update.effective_chat
-    if not message or not user or not chat:
-        return False
-    if chat.type in ("group", "supergroup"):
-        return bool(ALLOWED_CHAT_ID and chat.id == ALLOWED_CHAT_ID)
-    return bool(ALLOWED_USER_ID and user.id == ALLOWED_USER_ID and chat.type == "private")
+    message = update.effective_message
+    return bool(
+        chat
+        and message
+        and chat.type in ("group", "supergroup")
+        and ALLOWED_CHAT_ID
+        and chat.id == ALLOWED_CHAT_ID
+    )
+
+
+CREATORS_CHAT_MESSAGE = (
+    "Этот бот работает только в чате креаторов. "
+    "В личных сообщениях генерация недоступна. "
+    "Перейди в чат креаторов и отправь запрос там."
+)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    chat = update.effective_chat
+    if not message or not chat:
+        return
     if is_allowed(update):
-        await update.effective_message.reply_text(
-            "Я на связи. Для генерации напиши: «сгенерируй изображение …» или /img и опиши результат."
+        await message.reply_text(
+            "Я на связи. Генерировать могут все участники этого чата. "
+            "Напиши «сгенерируй изображение …» или /img и опиши результат."
         )
+    elif chat.type == "private":
+        await message.reply_text(CREATORS_CHAT_MESSAGE)
 
 
 async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     chat = update.effective_chat
-    if not is_allowed(update) or not message or not chat:
+    if not message or not chat:
+        return
+    if not is_allowed(update):
+        # Never run image generation in a private chat. Explain the restriction
+        # for explicit generation requests; /start always displays this notice.
+        prompt_text = (message.text or "").strip()
+        if chat.type == "private" and (
+            prompt_text.lower().startswith("/img")
+            or re.search(
+                r"\\b(сгенерируй\\w*|сгенерировать|сгенерить|сгенери|сген|"
+                r"нарисуй\\w*|нарисовать|создай\\w*|создать|изобрази\\w*|"
+                r"сфотографируй|сфоткай|изображени\\w*|картинк\\w*|фото\\w*)\\b",
+                prompt_text,
+                flags=re.IGNORECASE,
+            )
+        ):
+            await message.reply_text(CREATORS_CHAT_MESSAGE)
         return
 
     prompt = (message.text or "").strip()
@@ -637,8 +668,8 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     if not TOKEN:
         raise RuntimeError("Не задан TELEGRAM_BOT_TOKEN.")
-    if not ALLOWED_USER_ID and not ALLOWED_CHAT_ID:
-        raise RuntimeError("Задай ALLOWED_USER_ID и/или ALLOWED_CHAT_ID.")
+    if not ALLOWED_CHAT_ID:
+        raise RuntimeError("Задай ALLOWED_CHAT_ID для чата креаторов.")
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("img", handle_prompt))
