@@ -362,31 +362,54 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not prompt:
         return
 
-    is_group = chat.type in ("group", "supergroup")
     command_prompt = re.match(r"^/img(?:@\w+)?\s*(.*)$", prompt, flags=re.IGNORECASE | re.DOTALL)
-
-    if is_group:
-        # In group chats, generate only when explicitly requested to avoid accidental generations.
-        explicit_request = re.search(
-            r"\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\b",
+    if command_prompt:
+        prompt = command_prompt.group(1).strip()
+    else:
+        # Generation starts only for an explicit image request, in both private and group chats.
+        action = re.search(
+            r"\b(сгенерируй\w*|сгенерировать|сгенерить|сгенери|сген|генерируй\w*|"
+            r"нарисуй\w*|нарисовать|создай\w*|создать|сделай\w*|сделать|"
+            r"покажи\w*|пришли\w*|дай|дайте|выдай\w*|изобрази\w*|"
+            r"сфотографируй|сфоткай|сделай фото|хочу фото|нужно фото|"
+            r"мне фото|можно фото|нужна картинка|нужно изображение)\b",
             prompt,
             flags=re.IGNORECASE,
         )
-        if command_prompt:
-            prompt = command_prompt.group(1).strip()
-        elif explicit_request:
-            prompt = re.sub(
-                r"^.*?\b(сгенерируй|сгенерировать|нарисуй|создай изображение|сделай картинку|генерируй)\b[:,!\s-]*",
-                "",
-                prompt,
-                count=1,
-                flags=re.IGNORECASE | re.DOTALL,
-            ).strip()
-        else:
+        image_word = re.search(
+            r"\b(изображени\w*|картинк\w*|картин\w*|фото\w*|фотк\w*|"
+            r"фотографи\w*|рисунок\w*|иллюстраци\w*|арт\w*|портрет\w*|"
+            r"аватар\w*|обложк\w*|снимок\w*|image\w*|picture\w*|photo\w*|portrait\w*)\b",
+            prompt,
+            flags=re.IGNORECASE,
+        )
+        direct_visual = re.search(
+            r"\b(сгенерируй\w*|сгенерить|сгенери|сген|нарисуй\w*|нарисовать|"
+            r"создай\w*|создать|изобрази\w*|сфотографируй|сфоткай)\b",
+            prompt,
+            flags=re.IGNORECASE,
+        )
+        if not ((action and image_word) or direct_visual):
             return
-    elif command_prompt:
-        # CommandHandler passes the original message text, so remove /img in private chats too.
-        prompt = command_prompt.group(1).strip()
+
+        # Strip the request phrase and keep the scene description for the model.
+        prompt = re.sub(
+            r"^.*?\b(сгенерируй\w*|сгенерировать|сгенерить|сгенери|сген|генерируй\w*|"
+            r"нарисуй\w*|нарисовать|создай\w*|создать|сделай\w*|сделать|"
+            r"покажи\w*|пришли\w*|дай|дайте|выдай\w*|изобрази\w*|"
+            r"сфотографируй|сфоткай|сделай фото|хочу фото|нужно фото|мне фото|можно фото)\b[:,!\s—–-]*",
+            "",
+            prompt,
+            count=1,
+            flags=re.IGNORECASE | re.DOTALL,
+        ).strip()
+        prompt = re.sub(
+            r"^(?:мне\s+)?(?:фото|фотку|картинку|изображение|рисунок|портрет)\s*(?:с|про|на тему|где|как)?\s*",
+            "",
+            prompt,
+            count=1,
+            flags=re.IGNORECASE,
+        ).strip()
 
     if not prompt:
         await context.bot.send_message(chat_id=chat.id, text="Опиши, какое изображение нужно создать.")
