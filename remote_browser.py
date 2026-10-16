@@ -31,6 +31,15 @@ def browser_main():
         time.sleep(2)
 
 class Handler(BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", "20")
+            self.end_headers()
+            return
+        self.send_error(404)
+
     def do_GET(self):
         if self.path not in ("/save", "/health"):
             self.send_error(404)
