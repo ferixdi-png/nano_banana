@@ -26,6 +26,8 @@ STATE_PATH = Path(os.getenv("FLOW_STORAGE_STATE_PATH", "/var/data/flow-storage-s
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/tmp/flow-output"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 MAX_ATTEMPTS = 3
+MAX_PENDING_GENERATIONS = 25
+USER_REQUEST_COOLDOWN_SECONDS = 15
 GENERATION_TIMEOUT = 180
 DOWNLOAD_TIMEOUT = 30
 
@@ -33,6 +35,9 @@ logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=loggin
 log = logging.getLogger("flow-telegram-bot")
 browser_lock = Lock()
 generation_queue_lock = asyncio.Lock()
+pending_generations = 0
+last_user_request_at = {}
+last_busy_notice_at = {}
 
 GENERATION_ACKNOWLEDGEMENTS = [
     "Щас, кожаный, сейчас будет красота.",
