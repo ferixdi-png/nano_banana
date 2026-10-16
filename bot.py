@@ -191,7 +191,7 @@ def set_generation_settings(page):
     if "9:16" not in trigger_text and "crop_9_16" not in trigger_text:
         choose_setting(page, "9:16")
     trigger_text = trigger.inner_text()
-    if "x1" not in trigger_text and not re.search(r"(^|\\n)1(\\n|$)", trigger_text):
+    if "x1" not in trigger_text and not any(line.strip() == "1" for line in trigger_text.splitlines()):
         choose_setting(page, "x1")
 
     verified_text = trigger.inner_text()
@@ -200,7 +200,7 @@ def set_generation_settings(page):
         raise FlowError(f"Модель Nano Banana 2.1 не подтверждена перед генерацией: {verified_text!r}")
     if not ("9:16" in verified_text or "crop_9_16" in verified_text):
         raise FlowError(f"Не удалось подтвердить вертикальный формат 9:16 перед генерацией: {verified_text!r}")
-    if not ("x1" in verified_text or re.search(r"(^|\\n)1(\\n|$)", verified_text)):
+    if not ("x1" in verified_text or any(line.strip() == "1" for line in verified_text.splitlines())):
         raise FlowError(f"Не удалось подтвердить одну генерацию (x1): {verified_text!r}")
     log.info("Verified Flow settings: Nano Banana 2.1, portrait 9:16, x1.")
 
