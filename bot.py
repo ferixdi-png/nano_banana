@@ -301,11 +301,17 @@ async def handle_prompt(
     now = time.monotonic()
 
     if _generation_in_progress:
+        if pending_image_path is not None:
+            _pending_images[pending_key] = (pending_image_path, now)
+            pending_image_path = None
         await message.reply_text(random.choice(BUSY_LINES))
         return
 
     elapsed = now - _last_generation_finished_at
     if _last_generation_finished_at and elapsed < GENERATION_COOLDOWN_SECONDS:
+        if pending_image_path is not None:
+            _pending_images[pending_key] = (pending_image_path, now)
+            pending_image_path = None
         wait_seconds = max(1, int(GENERATION_COOLDOWN_SECONDS - elapsed))
         await message.reply_text(
             random.choice(COOLDOWN_LINES).format(seconds=wait_seconds)
