@@ -38,6 +38,11 @@ IMAGE_INTENT_RE = re.compile(
     r"сгенерируй\s+(?:изображение|картинку|фото))\b",
     re.IGNORECASE,
 )
+# These keywords also indicate an image-generation prompt in the creators chat.
+KEYWORD_TRIGGER_RE = re.compile(
+    r"\b(?:prompt|realistic|face|style|промпт)\b",
+    re.IGNORECASE,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "output"
@@ -178,7 +183,9 @@ async def handle_prompt(
         return
 
     prompt = (message.text or "").strip()
-    if not prompt or not IMAGE_INTENT_RE.search(prompt):
+    if not prompt or not (
+        IMAGE_INTENT_RE.search(prompt) or KEYWORD_TRIGGER_RE.search(prompt)
+    ):
         return
 
     now = time.monotonic()
