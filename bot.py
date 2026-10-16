@@ -306,7 +306,7 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     queued = generation_queue_lock.locked()
     status_text = (
         "Предыдущая генерация ещё выполняется. Поставил запрос в очередь — "
-        "запущу, когда освободится браузер (примерно через минуту)."
+        "запущу, когда освободится браузер."
         if queued else "Принял промпт. Запускаю генерацию в Flow…"
     )
     status = await context.bot.send_message(chat_id=chat.id, text=status_text)
@@ -343,6 +343,18 @@ async def handle_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             except Exception as exc:
                 log.exception("Попытка %s завершилась ошибкой", attempt)
+                if "подозрительную активность" in str(exc).lower() or "suspicious activity" in str(exc).lower():
+                    error_text = (
+                        "Google Flow отклонил генерацию из-за подозрительной активности. "
+                        "Автоматические повторы остановлены, чтобы не усиливать блокировку. "
+                        "Проверьте сообщение об ошибке в Flow и попробуйте позже вручную.\n\n"
+                        f"Причина: {str(exc)[:700]}"
+                    )
+                    try:
+                        await status.edit_text(error_text)
+                    except Exception:
+                        log.exception("Не удалось обновить статусное сообщение Telegram")
+                    return
                 if attempt >= MAX_ATTEMPTS:
                     error_text = f"Не удалось получить изображение после {MAX_ATTEMPTS} попыток.\n\nПричина: {str(exc)[:700]}"
                     try:
