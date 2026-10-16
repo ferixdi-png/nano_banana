@@ -166,16 +166,16 @@ def prepare_storage_state():
 def create_new_project(context):
     """Open Flow home and create a fresh project for this single image generation."""
     page = next(
-        (p for p in context.pages if "flow.google.com" in p.url),
+        (p for p in context.pages if ("labs.google" in p.url and "/fx/tools/flow" in p.url) or "flow.google.com" in p.url),
         context.pages[0] if context.pages else context.new_page(),
     )
-    page.goto("https://flow.google.com/", wait_until="domcontentloaded", timeout=60000)
+    page.goto("https://labs.google/fx/tools/flow", wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(2500)
 
     current_url = page.url
     if "/project/" in current_url:
         # Flow may redirect directly to the last project; return to its home screen.
-        page.goto("https://flow.google.com/", wait_until="domcontentloaded", timeout=60000)
+        page.goto("https://labs.google/fx/tools/flow", wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(2500)
 
     body_text = ""
