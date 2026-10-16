@@ -9,9 +9,9 @@ services:
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
+      - key: ALLOWED_CHAT_ID
+        sync: false
       - key: ALLOWED_USER_ID
         sync: false
       - key: KIE_API_KEY
         sync: false
-      - key: KIE_API_BASE_URL
-        value: https://api.kie.ai
