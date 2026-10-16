@@ -17,7 +17,7 @@ load_dotenv()
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", "0"))
-CDP_URL = os.getenv("CDP_URL", "").strip()  # Optional: local Chrome CDP
+CDP_URL = os.getenv("CDP_URL", "http://127.0.0.1:9222" if os.name == "nt" else "").strip()  # Local Windows default; leave unset on Render
 FLOW_PROJECT_URL = os.getenv("FLOW_PROJECT_URL", "").strip()
 PROFILE_DIR = Path(os.getenv("FLOW_PROFILE_DIR", "/var/data/flow-profile"))
 STATE_PATH = Path(os.getenv("FLOW_STORAGE_STATE_PATH", "/var/data/flow-storage-state.json"))
