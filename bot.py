@@ -162,6 +162,116 @@ def prepare_storage_state():
             raise FlowError("FLOW_STORAGE_STATE_B64 is not valid base64-encoded Playwright storage state.") from exc
 
 
+def create_new_project(context):
+    """Open Flow home and create a fresh project for this single image generation."""
+    page = next(
+        (p for p in context.pages if "flow.google.com" in p.url),
+        context.pages[0] if context.pages else context.new_page(),
+    )
+    page.goto("https://flow.google.com/", wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(2500)
+
+    current_url = page.url
+    if "/project/" in current_url:
+        # Flow may redirect directly to the last project; return to its home screen.
+        page.goto("https://flow.google.com/", wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(2500)
+
+    body_text = ""
+    try:
+        body_text = page.locator("body").inner_text()
+    except Exception:
+        pass
+    body_lower = body_text.lower()
+    if any(marker in body_lower for marker in (
+        "мы заметили подозрительную активность",
+        "suspicious activity",
+    )):
+        raise FlowError(
+            "Flow показывает предупреждение о подозрительной активности уже на главной странице. "
+            "Остановили запуск и не создаём новые проекты автоматически."
+        )
+    if any(marker in body_lower for marker in (
+        "войдите в аккаунт",
+        "нужно войти в аккаунт",
+        "sign in",
+    )):
+        raise FlowError(
+            "Flow требует авторизацию перед созданием проекта. "
+            "Проверь авторизованную сессию. Текст страницы: " + body_text[-1200:]
+        )
+
+    project_url_before = current_url if "/project/" in current_url else ""
+    create_pattern = re.compile(
+        r"(new project|create project|start a project|создать проект|новый проект|создать новый проект)",
+        re.IGNORECASE,
+    )
+    clicked = False
+
+    # Prefer a clearly labelled project-creation button.
+    try:
+        buttons = page.get_by_role("button", name=create_pattern)
+        for i in range(min(buttons.count(), 10)):
+            button = buttons.nth(i)
+            if button.is_visible() and button.is_enabled():
+                button.click(timeout=5000)
+                clicked = True
+                break
+    except Exception:
+        log.exception("Could not click a labelled Flow new-project button")
+
+    # Some Flow layouts render the project tile as a non-button element.
+    if not clicked:
+        try:
+            candidates = page.get_by_text(create_pattern)
+            for i in range(min(candidates.count(), 12)):
+                item = candidates.nth(i)
+                if item.is_visible():
+                    item.click(timeout=5000)
+                    clicked = True
+                    break
+        except Exception:
+            log.exception("Could not click a labelled Flow new-project tile")
+
+    if not clicked:
+        raise FlowError(
+            "Не нашёл на главной странице Flow элемент создания нового проекта. "
+            "Автоматическую генерацию остановил, чтобы случайно не запустить генерацию в старом проекте. "
+            f"URL: {page.url}. Текст страницы: {body_text[-1800:]}"
+        )
+
+    try:
+        page.wait_for_url(re.compile(r".*/project/[^/]+.*"), timeout=30000)
+    except Exception as exc:
+        try:
+            page.wait_for_timeout(3000)
+        except Exception:
+            pass
+        if "/project/" not in page.url:
+            try:
+                tail = page.locator("body").inner_text()[-1800:]
+            except Exception:
+                tail = "(не удалось прочитать страницу)"
+            raise FlowError(
+                "Flow не открыл новый проект после нажатия кнопки создания. "
+                f"URL: {page.url}. Текст страницы: {tail}"
+            ) from exc
+
+    page.wait_for_timeout(1800)
+    match = re.search(r"/project/([^/?]+)", page.url)
+    if not match:
+        raise FlowError(f"Не удалось определить URL нового проекта Flow: {page.url}")
+    new_project_id = match.group(1)
+    previous_match = re.search(r"/project/([^/?]+)", FLOW_PROJECT_URL)
+    if previous_match and new_project_id == previous_match.group(1):
+        raise FlowError(
+            "Flow открыл прежний проект вместо нового. Генерацию отменили, чтобы не использовать старый проект."
+        )
+
+    log.info("Created fresh Flow project for this generation: %s", page.url)
+    return page
+
+
 def get_project_page(context):
     pages = context.pages
     page = next((p for p in pages if "/project/" in p.url), None)
@@ -384,19 +494,9 @@ def generate_and_download(prompt):
                             "Нужно экспортировать сессию из локального Chrome и добавить FLOW_STORAGE_STATE_B64 в Render."
                         )
 
-                page = get_project_page(context)
-                # Refresh the project once before each generation so Flow starts
-                # from a clean, current UI state. This does not bypass account
-                # restrictions; if Flow flags suspicious activity, stop the attempt.
-                project_url = page.url
-                log.info("Refreshing Flow project before generation: %s", project_url)
-                page.reload(wait_until="domcontentloaded", timeout=60000)
-                page.wait_for_timeout(2500)
-                if "/project/" not in page.url:
-                    raise FlowError(
-                        "После обновления Flow ушёл со страницы проекта. "
-                        f"Текущий URL: {page.url}"
-                    )
+                # Create a separate Flow project for every individual image generation.
+                # This keeps project history isolated but does not bypass account-level restrictions.
+                page = create_new_project(context)
                 set_generation_settings(page)
                 prompt_box = page.get_by_role("textbox", name="Что вы хотите создать?")
                 combined_prompt = MASTER_PROMPT.replace("[USER_PROMPT]", prompt)
