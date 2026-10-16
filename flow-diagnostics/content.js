@@ -43,6 +43,8 @@
       document.documentElement.appendChild(badge);
     }
 
+    if (badge.dataset.status === found.label) return;
+    badge.dataset.status = found.label;
     badge.replaceChildren();
     const heading = document.createElement("strong");
     heading.textContent = "Flow Diagnostics: " + found.label;
