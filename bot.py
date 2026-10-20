@@ -199,6 +199,13 @@ async def handle_prompt(
     if not message:
         return
 
+    # Ignore every message that does not explicitly address Ferixdi.
+    # This check must happen before private-chat replies or handling attachments,
+    # so ordinary photos never trigger a response or get saved as pending uploads.
+    prompt = (message.text or message.caption or "").strip()
+    if not BOT_NAME_RE.search(prompt):
+        return
+
     chat = update.effective_chat
     user = update.effective_user
     is_admin_private = (
